@@ -1,6 +1,6 @@
 {
   "name": "scribeflow-clinical-dictation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "engines": {
@@ -10,7 +10,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/pdf-delete.test.mjs",
+    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/pdf-delete.test.mjs tests/whisper-release.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

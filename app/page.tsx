@@ -50,10 +50,13 @@ type WhisperInstallStatus = {
     | "missing"
     | "installing"
     | "starting"
+    | "update_available"
     | "installed"
     | "failed";
   installed: boolean;
   message: string;
+  expectedReleaseVersion?: string;
+  installedReleaseVersion?: string | null;
 };
 
 type MicrophoneOption = {
@@ -911,6 +914,8 @@ export default function Home() {
       installed: false,
       message: "Checking Whisper on this computer.",
     });
+  const [whisperUpdatePromptDismissed, setWhisperUpdatePromptDismissed] =
+    useState(false);
   const [currentToken, setCurrentToken] = useState("");
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
@@ -1667,6 +1672,7 @@ export default function Home() {
   }, []);
 
   const installWhisper = useCallback(async () => {
+    setWhisperUpdatePromptDismissed(false);
     setWhisperInstallStatus({
       status: "installing",
       installed: false,
@@ -1748,6 +1754,12 @@ export default function Home() {
       setStatus("Whisper installation recommended");
     }
   }, [dictationEngine, whisperInstallStatus.status, whisperReady]);
+
+  useEffect(() => {
+    if (whisperInstallStatus.status !== "update_available") {
+      setWhisperUpdatePromptDismissed(false);
+    }
+  }, [whisperInstallStatus.status]);
 
   useEffect(
     () => () => {
@@ -2913,53 +2925,66 @@ export default function Home() {
         </div>
       </header>
 
-      {dictationEngine === "whisper" && !whisperReady && (
-        <section
-          className={`whisper-setup-banner ${whisperInstallStatus.status}`}
-          aria-live="polite"
-        >
-          <div>
-            <strong>
-              {whisperInstallStatus.status === "installing"
-                ? "Installing Whisper on this computer"
-                : whisperInstallStatus.status === "starting"
-                  ? "Starting Whisper"
-                  : whisperInstallStatus.installed
-                    ? "Whisper needs attention"
-                    : "Whisper is recommended"}
-            </strong>
-            <span>{whisperInstallStatus.message}</span>
-          </div>
-          {!whisperInstallStatus.installed &&
-            whisperInstallStatus.status !== "installing" &&
-            whisperInstallStatus.status !== "starting" &&
-            whisperInstallStatus.status !== "checking" && (
+      {dictationEngine === "whisper" &&
+        (!whisperReady ||
+          whisperInstallStatus.status === "update_available") && (
+          <section
+            className={`whisper-setup-banner ${whisperInstallStatus.status}`}
+            aria-live="polite"
+          >
+            <div>
+              <strong>
+                {whisperInstallStatus.status === "installing"
+                  ? "Installing Whisper on this computer"
+                  : whisperInstallStatus.status === "starting"
+                    ? "Starting Whisper"
+                    : whisperInstallStatus.status === "update_available"
+                      ? "Whisper update available"
+                      : whisperInstallStatus.installed
+                        ? "Whisper needs attention"
+                        : "Whisper is recommended"}
+              </strong>
+              <span>{whisperInstallStatus.message}</span>
+            </div>
+            {!whisperInstallStatus.installed &&
+              whisperInstallStatus.status !== "installing" &&
+              whisperInstallStatus.status !== "starting" &&
+              whisperInstallStatus.status !== "checking" && (
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={() => void installWhisper()}
+                >
+                  {whisperInstallStatus.status === "failed"
+                    ? "Try Whisper install again"
+                    : "Install Whisper"}
+                </button>
+              )}
+            {whisperInstallStatus.installed &&
+              whisperInstallStatus.status === "installed" && (
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={() => void installWhisper()}
+                >
+                  Repair or update Whisper
+                </button>
+              )}
+            {whisperInstallStatus.status === "update_available" && (
               <button
                 className="button primary"
                 type="button"
                 onClick={() => void installWhisper()}
               >
-                {whisperInstallStatus.status === "failed"
-                  ? "Try Whisper install again"
-                  : "Install Whisper"}
+                Update Whisper
               </button>
             )}
-          {whisperInstallStatus.installed &&
-            whisperInstallStatus.status === "installed" && (
-              <button
-                className="button primary"
-                type="button"
-                onClick={() => void installWhisper()}
-              >
-                Repair or update Whisper
-              </button>
+            {(whisperInstallStatus.status === "installing" ||
+              whisperInstallStatus.status === "starting") && (
+              <span className="whisper-install-spinner" aria-hidden="true" />
             )}
-          {(whisperInstallStatus.status === "installing" ||
-            whisperInstallStatus.status === "starting") && (
-            <span className="whisper-install-spinner" aria-hidden="true" />
-          )}
-        </section>
-      )}
+          </section>
+        )}
 
       <div className="workspace">
         <aside className="library-panel">
@@ -3516,6 +3541,46 @@ export default function Home() {
           </div>
         </section>
       </div>
+
+      {whisperInstallStatus.status === "update_available" &&
+        !whisperUpdatePromptDismissed && (
+          <div className="modal-backdrop" role="presentation">
+            <div
+              className="modal-card whisper-update-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="whisper-update-title"
+            >
+              <div className="modal-heading">
+                <div>
+                  <p className="eyebrow">Local speech recognition</p>
+                  <h2 id="whisper-update-title">Update Whisper?</h2>
+                </div>
+              </div>
+              <p>
+                A newer verified Whisper component is available. ScribeFlow
+                will download only the files that changed, verify them, and
+                restart local dictation. No audio or patient data is uploaded.
+              </p>
+              <div className="modal-actions">
+                <button
+                  className="button subtle"
+                  type="button"
+                  onClick={() => setWhisperUpdatePromptDismissed(true)}
+                >
+                  No, not now
+                </button>
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={() => void installWhisper()}
+                >
+                  Yes, update Whisper
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       {showQuicktextForm && (
         <div className="modal-backdrop" role="presentation">

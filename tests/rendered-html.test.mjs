@@ -78,6 +78,14 @@ test("includes quicktext, template, and local-save workflows", async () => {
     new URL("../scripts/install-native-whisper.ps1", import.meta.url),
     "utf8",
   );
+  const whisperReleaseManifest = await readFile(
+    new URL("../scripts/whisper-release.json", import.meta.url),
+    "utf8",
+  );
+  const whisperReleaseUtils = await readFile(
+    new URL("../scripts/whisper-release-utils.mjs", import.meta.url),
+    "utf8",
+  );
   const localModelServer = await readFile(
     new URL("../scripts/local-model-server.mjs", import.meta.url),
     "utf8",
@@ -178,6 +186,11 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Whisper is recommended/);
   assert.match(page, /Install Whisper/);
   assert.match(page, /Repair or update Whisper/);
+  assert.match(page, /Whisper update available/);
+  assert.match(page, /Update Whisper\?/);
+  assert.match(page, /No, not now/);
+  assert.match(page, /Yes, update Whisper/);
+  assert.match(page, /whisperUpdatePromptDismissed/);
   assert.match(page, /\/whisper\/install-status/);
   assert.match(page, /\/whisper\/install/);
   assert.match(page, /Audio is processed in memory on this computer/);
@@ -317,18 +330,23 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(whisperInstaller, /encoder_model_q4f16\.onnx/);
   assert.match(whisperInstaller, /decoder_model_merged_q4f16\.onnx/);
   assert.match(whisperInstaller, /No audio was uploaded/);
-  assert.match(nativeWhisperInstaller, /ggml-large-v3\.bin/);
-  assert.match(
-    nativeWhisperInstaller,
-    /AD82BF6A9043CEED055076D0FD39F5F186FF8062/,
-  );
-  assert.match(
-    nativeWhisperInstaller,
-    /whisper-cublas-12\.4\.0-bin-x64\.zip/,
-  );
+  assert.match(nativeWhisperInstaller, /whisper-release\.json/);
+  assert.match(nativeWhisperInstaller, /Stop-InstalledWhisper/);
+  assert.match(nativeWhisperInstaller, /whisperReleaseVersion/);
   assert.match(nativeWhisperInstaller, /unquantized = \$true/);
   assert.match(nativeWhisperInstaller, /remoteModelsAllowed = \$false/);
   assert.match(nativeWhisperInstaller, /No audio was uploaded/);
+  assert.match(
+    whisperReleaseManifest,
+    /AD82BF6A9043CEED055076D0FD39F5F186FF8062/,
+  );
+  assert.match(
+    whisperReleaseManifest,
+    /whisper-cublas-12\.4\.0-bin-x64\.zip/,
+  );
+  assert.match(whisperReleaseManifest, /whisper-large-v3-r1/);
+  assert.match(whisperReleaseUtils, /isInstalledWhisperReleaseCurrent/);
+  assert.match(whisperReleaseUtils, /validateWhisperRelease/);
   assert.match(localModelServer, /server\.listen\(port, host/);
   assert.match(localModelServer, /const host = "127\.0\.0\.1"/);
   assert.match(localModelServer, /process\.env\.SCRIBEFLOW_MODEL_PORT/);
@@ -349,6 +367,11 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(localModelServer, /spawn\(\s*"powershell\.exe"/);
   assert.match(localModelServer, /startNativeWhisperService/);
   assert.match(localModelServer, /nativeWhisperPidFile/);
+  assert.match(localModelServer, /status: "update_available"/);
+  assert.match(localModelServer, /isInstalledWhisperReleaseCurrent/);
+  assert.match(localModelServer, /migrateLegacyWhisperManifest/);
+  assert.match(localModelServer, /migratedLegacyInstall: true/);
+  assert.match(localModelServer, /replace\(\/\^\\uFEFF\//);
   assert.match(localModelServer, /origin \|\| !allowedOrigins\.has\(origin\)/);
   assert.doesNotMatch(localModelServer, /\/config\/(?:notes|audio|pdf)/);
   assert.match(localModelServer, /!url\.pathname\.startsWith\("\/models\/"\)/);
@@ -361,7 +384,9 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(launcher, /\$modelPort = 3001/);
   assert.match(launcher, /\$nativeWhisperPort = 3002/);
   assert.match(launcher, /\$env:LOCALAPPDATA/);
-  assert.match(launcher, /models\\ggml-large-v3\.bin/);
+  assert.match(launcher, /whisper-release\.json/);
+  assert.match(launcher, /\$nativeWhisperModelFileName/);
+  assert.match(launcher, /\$nativeWhisperRuntimeVersion/);
   assert.match(launcher, /whisper-server\.exe/);
   assert.match(launcher, /"--beam-size", "5"/);
   assert.match(launcher, /"--host", "127\.0\.0\.1"/);
@@ -380,10 +405,13 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installerBuilder, /includesPatientData = \$false/);
   assert.match(installerBuilder, /ggml-large-v3\.bin/);
   assert.match(installerBuilder, /app-version\.json/);
+  assert.match(installerBuilder, /whisper-release\.json/);
+  assert.match(installerBuilder, /whisper-release-utils\.mjs/);
   assert.match(installerBuilder, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.match(installer, /\$installRoot = Join-Path \$programsRoot "ScribeFlow"/);
   assert.match(installer, /Templates remain protected/);
   assert.match(installer, /Whisper is kept separately/);
+  assert.match(installer, /whisper-release\.json/);
   assert.doesNotMatch(installer, /\$SkipModelDownload/);
   assert.match(startLauncher, /update-scribeflow\.ps1/);
   assert.match(startLauncher, /launch-scribeflow\.ps1/);

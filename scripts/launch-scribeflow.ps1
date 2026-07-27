@@ -18,6 +18,20 @@ $localDataRoot = if ($env:LOCALAPPDATA) {
 } else {
     Join-Path $projectRoot ".scribeflow-data\ScribeFlow"
 }
+$whisperReleasePath = Join-Path $projectRoot "scripts\whisper-release.json"
+if (-not (Test-Path -LiteralPath $whisperReleasePath -PathType Leaf)) {
+    throw "The bundled Whisper release manifest is missing."
+}
+$whisperRelease = Get-Content -LiteralPath $whisperReleasePath -Raw |
+    ConvertFrom-Json
+$nativeWhisperRuntimeVersion = [string]$whisperRelease.runtime.version
+$nativeWhisperModelFileName = [string]$whisperRelease.model.fileName
+if (
+    $nativeWhisperRuntimeVersion -notmatch "^v[A-Za-z0-9._-]+$" -or
+    $nativeWhisperModelFileName -notmatch "^[A-Za-z0-9._-]+\.bin$"
+) {
+    throw "The bundled Whisper release manifest is invalid."
+}
 $portableNodeDirectory = Join-Path $projectRoot "runtime\node"
 $runtimeRoot = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies"
 $bundledNodeDirectory = Join-Path $runtimeRoot "node\bin"
@@ -32,15 +46,71 @@ $modelServerScript = Join-Path $projectRoot "scripts\local-model-server.mjs"
 $portableWebServerScript = Join-Path $projectRoot "scripts\portable-web-server.mjs"
 $portableNativeWhisperRoot = Join-Path $projectRoot "runtime\native-whisper"
 $installedNativeWhisperRoot = Join-Path $localDataRoot "native-whisper"
-$portableNativeModel = Join-Path $portableNativeWhisperRoot "models\ggml-large-v3.bin"
+$portableNativeModel = Join-Path (
+    Join-Path $portableNativeWhisperRoot "models"
+) $nativeWhisperModelFileName
 $nativeWhisperRoot = if (Test-Path -LiteralPath $portableNativeModel) {
     $portableNativeWhisperRoot
 } else {
     $installedNativeWhisperRoot
 }
+
+if ($nativeWhisperRoot -eq $installedNativeWhisperRoot) {
+    $installedManifestPath = Join-Path (
+        $installedNativeWhisperRoot
+    ) "native-manifest.json"
+    if (Test-Path -LiteralPath $installedManifestPath -PathType Leaf) {
+        try {
+            $installedManifest = Get-Content `
+                -LiteralPath $installedManifestPath `
+                -Raw |
+                ConvertFrom-Json
+            $installedRuntimeVersion = [string]$installedManifest.runtimeVersion
+            $installedModelFileName = [string]$installedManifest.modelFileName
+            $expectedRuntimeRoot = Join-Path (
+                $installedNativeWhisperRoot
+            ) "runtime-$nativeWhisperRuntimeVersion"
+            $expectedRuntimeExists = @(
+                (Join-Path $expectedRuntimeRoot "Release\whisper-server.exe"),
+                (
+                    Join-Path $expectedRuntimeRoot (
+                        "runtime-$nativeWhisperRuntimeVersion\Release\whisper-server.exe"
+                    )
+                )
+            ) | Where-Object {
+                Test-Path -LiteralPath $_ -PathType Leaf
+            }
+            if (
+                -not $expectedRuntimeExists -and
+                $installedRuntimeVersion -match "^v[A-Za-z0-9._-]+$"
+            ) {
+                $nativeWhisperRuntimeVersion = $installedRuntimeVersion
+            }
+
+            $expectedInstalledModel = Join-Path (
+                Join-Path $installedNativeWhisperRoot "models"
+            ) $nativeWhisperModelFileName
+            if (
+                -not (Test-Path -LiteralPath $expectedInstalledModel) -and
+                $installedModelFileName -match "^[A-Za-z0-9._-]+\.bin$"
+            ) {
+                $nativeWhisperModelFileName = $installedModelFileName
+            }
+        }
+        catch {
+            # A damaged manifest is handled by the in-app repair workflow.
+        }
+    }
+}
+
+$nativeWhisperRuntimeFolder = "runtime-$nativeWhisperRuntimeVersion"
 $nativeWhisperRuntimeCandidates = @(
-    (Join-Path $nativeWhisperRoot "runtime-v1.9.1\Release"),
-    (Join-Path $nativeWhisperRoot "runtime-v1.9.1\runtime-v1.9.1\Release")
+    (Join-Path $nativeWhisperRoot "$nativeWhisperRuntimeFolder\Release"),
+    (
+        Join-Path $nativeWhisperRoot (
+            "$nativeWhisperRuntimeFolder\$nativeWhisperRuntimeFolder\Release"
+        )
+    )
 )
 $nativeWhisperRuntime = $nativeWhisperRuntimeCandidates |
     Where-Object {
@@ -51,7 +121,9 @@ if (-not $nativeWhisperRuntime) {
     $nativeWhisperRuntime = $nativeWhisperRuntimeCandidates[0]
 }
 $nativeWhisperServer = Join-Path $nativeWhisperRuntime "whisper-server.exe"
-$nativeWhisperModel = Join-Path $nativeWhisperRoot "models\ggml-large-v3.bin"
+$nativeWhisperModel = Join-Path (
+    Join-Path $nativeWhisperRoot "models"
+) $nativeWhisperModelFileName
 $nativeWhisperLogDirectory = Join-Path $runtimeDirectory "native-whisper"
 $nativeWhisperLog = Join-Path $nativeWhisperLogDirectory "server.out.log"
 $nativeWhisperErrorLog = Join-Path $nativeWhisperLogDirectory "server.err.log"

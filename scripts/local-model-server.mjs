@@ -18,28 +18,36 @@ import { homedir } from "node:os";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deleteVerifiedPdf } from "./pdf-delete-utils.mjs";
+import {
+  isInstalledWhisperReleaseCurrent,
+  validateWhisperRelease,
+} from "./whisper-release-utils.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const whisperRelease = validateWhisperRelease(
+  JSON.parse(
+    readFileSync(resolve(projectRoot, "scripts", "whisper-release.json"), "utf8"),
+  ),
+);
 const dataRoot = resolve(
   process.env.LOCALAPPDATA || resolve(projectRoot, ".scribeflow-data"),
   "ScribeFlow",
 );
 const modelRoot = resolve(dataRoot, "models");
 const nativeWhisperRoot = resolve(dataRoot, "native-whisper");
-const nativeWhisperModel = resolve(
+const expectedNativeWhisperModel = resolve(
   nativeWhisperRoot,
   "models",
-  "ggml-large-v3.bin",
+  whisperRelease.model.fileName,
 );
-const nativeWhisperRuntimeCandidates = [
-  resolve(nativeWhisperRoot, "runtime-v1.9.1", "Release"),
-  resolve(
-    nativeWhisperRoot,
-    "runtime-v1.9.1",
-    "runtime-v1.9.1",
-    "Release",
-  ),
-];
+const expectedNativeWhisperRuntimeRoot = resolve(
+  nativeWhisperRoot,
+  `runtime-${whisperRelease.runtime.version}`,
+);
+const nativeWhisperManifest = resolve(
+  nativeWhisperRoot,
+  "native-manifest.json",
+);
 const nativeWhisperInstaller = resolve(
   projectRoot,
   "scripts",
@@ -101,57 +109,167 @@ function sendJson(response, status, payload) {
   response.end(body);
 }
 
-function getNativeWhisperRuntime() {
-  return nativeWhisperRuntimeCandidates.find((candidate) =>
-    existsSync(resolve(candidate, "whisper-server.exe")),
-  );
+function isNativeWhisperInstalled() {
+  const components = getNativeWhisperComponents();
+  return Boolean(components.model && components.runtime);
 }
 
-function isNativeWhisperInstalled() {
-  return existsSync(nativeWhisperModel) && Boolean(getNativeWhisperRuntime());
+function readInstalledWhisperManifest() {
+  if (!existsSync(nativeWhisperManifest)) return null;
+  try {
+    return JSON.parse(
+      readFileSync(nativeWhisperManifest, "utf8").replace(/^\uFEFF/, ""),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function getNativeWhisperComponents() {
+  const installedManifest = readInstalledWhisperManifest();
+  const runtimeRoots = [expectedNativeWhisperRuntimeRoot];
+  if (
+    typeof installedManifest?.runtimeVersion === "string" &&
+    /^v[A-Za-z0-9._-]+$/.test(installedManifest.runtimeVersion) &&
+    installedManifest.runtimeVersion !== whisperRelease.runtime.version
+  ) {
+    runtimeRoots.push(
+      resolve(
+        nativeWhisperRoot,
+        `runtime-${installedManifest.runtimeVersion}`,
+      ),
+    );
+  }
+
+  const modelFiles = [expectedNativeWhisperModel];
+  if (
+    typeof installedManifest?.modelFileName === "string" &&
+    /^[A-Za-z0-9._-]+\.bin$/.test(installedManifest.modelFileName) &&
+    installedManifest.modelFileName !== whisperRelease.model.fileName
+  ) {
+    modelFiles.push(
+      resolve(
+        nativeWhisperRoot,
+        "models",
+        installedManifest.modelFileName,
+      ),
+    );
+  }
+
+  const runtime = runtimeRoots
+    .flatMap((runtimeRoot) => [
+      resolve(runtimeRoot, "Release"),
+      resolve(runtimeRoot, runtimeRoot.split(/[\\/]/).at(-1), "Release"),
+    ])
+    .find((candidate) =>
+      existsSync(resolve(candidate, "whisper-server.exe")),
+    );
+  const model = modelFiles.find((candidate) => existsSync(candidate));
+  return { model, runtime };
+}
+
+function migrateLegacyWhisperManifest(components) {
+  if (readInstalledWhisperManifest()) {
+    return readInstalledWhisperManifest();
+  }
+  if (
+    components.model !== expectedNativeWhisperModel ||
+    !components.runtime?.startsWith(`${expectedNativeWhisperRuntimeRoot}${sep}`)
+  ) {
+    return null;
+  }
+
+  const migratedManifest = {
+    whisperReleaseVersion: whisperRelease.releaseVersion,
+    displayName: whisperRelease.displayName,
+    runtime: whisperRelease.runtime.source,
+    runtimeVersion: whisperRelease.runtime.version,
+    runtimeArchiveName: whisperRelease.runtime.archiveName,
+    runtimeSha256: whisperRelease.runtime.sha256,
+    model: whisperRelease.model.id,
+    modelSource: whisperRelease.model.source,
+    modelFileName: whisperRelease.model.fileName,
+    modelSha1: whisperRelease.model.sha1,
+    unquantized: true,
+    remoteModelsAllowed: false,
+    migratedLegacyInstall: true,
+  };
+  mkdirSync(nativeWhisperRoot, { recursive: true });
+  const temporaryManifest = `${nativeWhisperManifest}.new`;
+  writeFileSync(
+    temporaryManifest,
+    JSON.stringify(migratedManifest),
+    "utf8",
+  );
+  renameSync(temporaryManifest, nativeWhisperManifest);
+  return migratedManifest;
+}
+
+function withWhisperRelease(payload) {
+  const installedManifest = readInstalledWhisperManifest();
+  return {
+    ...payload,
+    expectedReleaseVersion: whisperRelease.releaseVersion,
+    installedReleaseVersion:
+      installedManifest?.whisperReleaseVersion ||
+      installedManifest?.runtimeVersion ||
+      null,
+  };
 }
 
 function getWhisperInstallStatus() {
   if (whisperInstallerProcess) {
-    return {
+    return withWhisperRelease({
       status: "installing",
       installed: false,
-      message:
-        "Downloading and verifying Whisper Large-v3 (about 3.1 GB). Keep ScribeFlow open.",
-    };
+      message: `Downloading and verifying ${whisperRelease.displayName} (${whisperRelease.downloadSizeLabel}). Keep ScribeFlow open.`,
+    });
   }
   if (isNativeWhisperInstalled()) {
+    const components = getNativeWhisperComponents();
+    const installedManifest =
+      readInstalledWhisperManifest() ||
+      migrateLegacyWhisperManifest(components);
+    if (
+      !isInstalledWhisperReleaseCurrent(installedManifest, whisperRelease)
+    ) {
+      return withWhisperRelease({
+        status: "update_available",
+        installed: true,
+        message:
+          "A verified Whisper update is available. Dictation can continue until you choose to update.",
+      });
+    }
     if (Date.now() < whisperStartingUntil) {
-      return {
+      return withWhisperRelease({
         status: "starting",
         installed: true,
         message: "Whisper is installed and starting. This can take a moment.",
-      };
+      });
     }
-    return {
+    return withWhisperRelease({
       status: "installed",
       installed: true,
-      message: "Whisper Large-v3 is installed locally.",
-    };
+      message: `${whisperRelease.displayName} is installed locally.`,
+    });
   }
   if (whisperInstallError) {
-    return {
+    return withWhisperRelease({
       status: "failed",
       installed: false,
       message: whisperInstallError,
-    };
+    });
   }
-  return {
+  return withWhisperRelease({
     status: "missing",
     installed: false,
-    message:
-      "Install Whisper Large-v3 for private, accurate dictation on this computer.",
-  };
+    message: `Install ${whisperRelease.displayName} for private, accurate dictation on this computer.`,
+  });
 }
 
 function startNativeWhisperService() {
-  const runtime = getNativeWhisperRuntime();
-  if (!runtime || !existsSync(nativeWhisperModel)) return;
+  const { model, runtime } = getNativeWhisperComponents();
+  if (!runtime || !model) return;
   const serverExecutable = resolve(runtime, "whisper-server.exe");
   const service = spawn(
     serverExecutable,
@@ -161,7 +279,7 @@ function startNativeWhisperService() {
       "--port",
       "3002",
       "--model",
-      nativeWhisperModel,
+      model,
       "--threads",
       "12",
       "--language",

@@ -82,6 +82,8 @@ foreach ($requiredPath in @(
     (Join-Path $payloadRoot "scripts\start-scribeflow.ps1"),
     (Join-Path $payloadRoot "scripts\update-scribeflow.ps1"),
     (Join-Path $payloadRoot "scripts\install-native-whisper.ps1"),
+    (Join-Path $payloadRoot "scripts\whisper-release.json"),
+    (Join-Path $payloadRoot "scripts\whisper-release-utils.mjs"),
     (Join-Path $payloadRoot "dist\server\index.js"),
     (Join-Path $payloadRoot "dist\client")
 )) {
