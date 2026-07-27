@@ -1,0 +1,65 @@
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test
+        run: pnpm test
+
+      - name: Create Windows installer
+        shell: pwsh
+        run: |
+          ./scripts/build-portable-installer.ps1 `
+            -SkipBuild `
+            -OutputRoot "$env:RUNNER_TEMP\ScribeFlow-Online-Installer"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScribeFlow-Windows-Online-Installer
+          path: ${{ runner.temp }}/ScribeFlow-Windows-Online-Installer.zip
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $asset = "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip"
+          if (gh release view "${{ github.ref_name }}" 2>$null) {
+            gh release upload "${{ github.ref_name }}" $asset --clobber
+          }
+          else {
+            gh release create "${{ github.ref_name }}" $asset `
+              --generate-notes `
+              --title "ScribeFlow ${{ github.ref_name }}"
+          }
