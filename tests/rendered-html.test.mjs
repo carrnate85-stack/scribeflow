@@ -433,12 +433,15 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installerBuilder, /whisper-release\.json/);
   assert.match(installerBuilder, /whisper-release-utils\.mjs/);
   assert.match(installerBuilder, /document-storage-utils\.mjs/);
+  assert.match(installerBuilder, /assets\\ScribeFlow\.ico/);
   assert.match(installerBuilder, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.match(installer, /\$installRoot = Join-Path \$programsRoot "ScribeFlow"/);
   assert.match(installer, /Templates sync through Documents\\ScribeFlow/);
   assert.match(installer, /Whisper is kept separately/);
   assert.match(installer, /whisper-release\.json/);
   assert.match(installer, /document-storage-utils\.mjs/);
+  assert.match(installer, /\$desktopShortcut\.IconLocation = "\$installedIcon,0"/);
+  assert.match(installer, /\$startMenuShortcut\.IconLocation = "\$installedIcon,0"/);
   assert.doesNotMatch(installer, /\$SkipModelDownload/);
   assert.match(startLauncher, /update-scribeflow\.ps1/);
   assert.match(startLauncher, /launch-scribeflow\.ps1/);

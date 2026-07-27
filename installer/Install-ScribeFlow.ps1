@@ -85,6 +85,7 @@ foreach ($requiredPath in @(
     (Join-Path $payloadRoot "scripts\whisper-release.json"),
     (Join-Path $payloadRoot "scripts\whisper-release-utils.mjs"),
     (Join-Path $payloadRoot "scripts\document-storage-utils.mjs"),
+    (Join-Path $payloadRoot "assets\ScribeFlow.ico"),
     (Join-Path $payloadRoot "dist\server\index.js"),
     (Join-Path $payloadRoot "dist\client")
 )) {
@@ -136,6 +137,7 @@ if (Test-Path -LiteralPath $backupRoot) {
 }
 
 $installedLauncher = Join-Path $installRoot "Launch ScribeFlow.cmd"
+$installedIcon = Join-Path $installRoot "assets\ScribeFlow.ico"
 $shell = New-Object -ComObject WScript.Shell
 $desktopShortcut = $shell.CreateShortcut(
     (Join-Path (Get-ScribeFlowDesktop) "ScribeFlow.lnk")
@@ -143,6 +145,7 @@ $desktopShortcut = $shell.CreateShortcut(
 $desktopShortcut.TargetPath = $installedLauncher
 $desktopShortcut.WorkingDirectory = $installRoot
 $desktopShortcut.Description = "Local-only clinical dictation"
+$desktopShortcut.IconLocation = "$installedIcon,0"
 $desktopShortcut.Save()
 
 $startMenuFolder = Join-Path (
@@ -155,6 +158,7 @@ $startMenuShortcut = $shell.CreateShortcut(
 $startMenuShortcut.TargetPath = $installedLauncher
 $startMenuShortcut.WorkingDirectory = $installRoot
 $startMenuShortcut.Description = "Local-only clinical dictation"
+$startMenuShortcut.IconLocation = "$installedIcon,0"
 $startMenuShortcut.Save()
 
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScribeFlow"
