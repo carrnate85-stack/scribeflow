@@ -18,6 +18,41 @@ $localDataRoot = if ($env:LOCALAPPDATA) {
 } else {
     Join-Path $projectRoot ".scribeflow-data\ScribeFlow"
 }
+
+function Get-ScribeFlowDocumentsRoot {
+    $knownDocuments = [Environment]::GetFolderPath("MyDocuments")
+    if (
+        $knownDocuments -and
+        $knownDocuments -match "(?i)\\OneDrive(?:[^\\]*)?\\Documents$"
+    ) {
+        return Join-Path $knownDocuments "ScribeFlow"
+    }
+
+    foreach ($oneDriveRoot in @(
+        $env:OneDriveConsumer,
+        $env:OneDriveCommercial,
+        $env:OneDrive
+    )) {
+        if ($oneDriveRoot -and (Test-Path -LiteralPath $oneDriveRoot)) {
+            return Join-Path $oneDriveRoot "Documents\ScribeFlow"
+        }
+    }
+
+    if ($knownDocuments) {
+        return Join-Path $knownDocuments "ScribeFlow"
+    }
+    return Join-Path $env:USERPROFILE "Documents\ScribeFlow"
+}
+
+$documentsRoot = [IO.Path]::GetFullPath((Get-ScribeFlowDocumentsRoot))
+New-Item -ItemType Directory -Path (
+    Join-Path $documentsRoot "Notes"
+) -Force | Out-Null
+New-Item -ItemType Directory -Path (
+    Join-Path $documentsRoot "Templates"
+) -Force | Out-Null
+$env:SCRIBEFLOW_DOCUMENTS_ROOT = $documentsRoot
+
 $whisperReleasePath = Join-Path $projectRoot "scripts\whisper-release.json"
 if (-not (Test-Path -LiteralPath $whisperReleasePath -PathType Leaf)) {
     throw "The bundled Whisper release manifest is missing."
@@ -400,7 +435,7 @@ if (Get-ScribeFlowResponse -Port $selectedPort) {
 }
 
 if (-not (Test-PortAvailable -Port $selectedPort)) {
-    throw "Port 3000 is being used by another app. Close that app, then launch ScribeFlow again. ScribeFlow stays on port 3000 so your locally saved templates remain consistent."
+    throw "Port 3000 is being used by another app. Close that app, then launch ScribeFlow again. ScribeFlow stays on port 3000 so your synced templates remain consistent."
 }
 
 $server = Start-Process `

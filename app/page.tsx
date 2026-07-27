@@ -869,6 +869,7 @@ export default function Home() {
   const [note, setNote] = useState("");
   const [noteHtml, setNoteHtml] = useState("");
   const [noteTitle, setNoteTitle] = useState("Untitled encounter");
+  const [savedNoteName, setSavedNoteName] = useState("");
   const [activePanel, setActivePanel] = useState<
     "quicktext" | "templates" | "vocabulary"
   >("templates");
@@ -961,6 +962,7 @@ export default function Home() {
     if (!editor) return;
     setNote(editor.innerText.replace(/\u00a0/g, " "));
     setNoteHtml(editor.innerHTML);
+    setSavedNoteName("");
   }, []);
 
   const rememberSelection = useCallback(() => {
@@ -1141,6 +1143,7 @@ export default function Home() {
     const html = contentHtml || plainTextToHtml(content);
     setNote(content);
     setNoteHtml(html);
+    setSavedNoteName("");
     if (noteRef.current) noteRef.current.innerHTML = html;
     lastSelectionRef.current = null;
     setCurrentToken("");
@@ -1532,11 +1535,11 @@ export default function Home() {
         diskPayload.updatedAt === selectedPayload.updatedAt &&
         JSON.stringify(diskPayload.templates) === serializedTemplates;
       if (diskMatches) {
-        setTemplateStorageStatus("Protected on this PC");
+        setTemplateStorageStatus("Synced in Documents");
       } else {
         try {
           await persistTemplatesToDisk(selectedPayload);
-          setTemplateStorageStatus("Protected on this PC");
+          setTemplateStorageStatus("Synced in Documents");
         } catch {
           setTemplateStorageStatus("Browser backup only");
         }
@@ -2640,7 +2643,7 @@ export default function Home() {
     );
     setTemplateStorageStatus("Protecting templates...");
     void persistTemplatesToDisk(payload)
-      .then(() => setTemplateStorageStatus("Protected on this PC"))
+      .then(() => setTemplateStorageStatus("Synced in Documents"))
       .catch(() => {
         setTemplateStorageStatus("Browser backup only");
         setToast("Template saved in browser; durable backup needs the launcher");
@@ -2811,34 +2814,29 @@ export default function Home() {
     setToast("Note copied to clipboard");
   }
 
-  function downloadNote() {
-    const documentTitle =
-      noteTitle.replace(/[<>&]/g, "").trim() || "Clinical note";
-    const formattedDocument = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>${documentTitle}</title>
-  <style>
-    body { max-width: 760px; margin: 48px auto; color: #182321; font: 16px/1.7 Georgia, serif; }
-    h1 { margin-bottom: 28px; font: 600 24px/1.2 Georgia, serif; }
-  </style>
-</head>
-<body>
-  <h1>${documentTitle}</h1>
-  <div>${noteHtml || plainTextToHtml(note)}</div>
-</body>
-</html>`;
-    const blob = new Blob([formattedDocument], {
-      type: "text/html;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${noteTitle.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "clinical-note"}.html`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setToast("Formatted note downloaded");
+  async function saveNote() {
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:3001/documents/save-note",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: noteTitle,
+            note,
+            noteHtml,
+          }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error("The note could not be saved");
+      }
+      const saved = (await response.json()) as { fileName: string };
+      setSavedNoteName(saved.fileName);
+      setToast(`Saved in Documents\\ScribeFlow\\Notes: ${saved.fileName}`);
+    } catch {
+      setToast("Note was not saved. Keep ScribeFlow open and try again.");
+    }
   }
 
   function newNote() {
@@ -3192,13 +3190,19 @@ export default function Home() {
               <input
                 id="note-title"
                 value={noteTitle}
-                onChange={(event) => setNoteTitle(event.target.value)}
+                onChange={(event) => {
+                  setNoteTitle(event.target.value);
+                  setSavedNoteName("");
+                }}
                 aria-label="Note title"
               />
             </div>
             <div className="note-actions">
               <span className="save-status">
-                <span aria-hidden="true">◉</span> Memory only · not saved
+                <span aria-hidden="true">◉</span>{" "}
+                {savedNoteName
+                  ? "Saved in OneDrive"
+                  : "Not saved · save to OneDrive"}
               </span>
               <button
                 className="toolbar-button"
@@ -3210,12 +3214,12 @@ export default function Home() {
               <button
                 className="toolbar-button"
                 type="button"
-                onClick={downloadNote}
+                onClick={() => void saveNote()}
                 disabled={!note.trim()}
-                aria-label="Download note"
-                title="Download note"
+                aria-label="Save note to Documents"
+                title="Save note to Documents\ScribeFlow\Notes"
               >
-                ↓
+                Save
               </button>
             </div>
           </div>

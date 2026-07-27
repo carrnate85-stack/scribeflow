@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -17,6 +18,7 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { saveNoteDocument } from "./document-storage-utils.mjs";
 import { deleteVerifiedPdf } from "./pdf-delete-utils.mjs";
 import {
   isInstalledWhisperReleaseCurrent,
@@ -60,8 +62,18 @@ const nativeWhisperPidFile = resolve(
   "native-whisper",
   "server.pid",
 );
-const templatesFile = resolve(dataRoot, "templates.json");
-const templateBackupsRoot = resolve(dataRoot, "template-backups");
+const defaultDocumentsRoot = process.env.OneDrive
+  ? resolve(process.env.OneDrive, "Documents", "ScribeFlow")
+  : resolve(homedir(), "Documents", "ScribeFlow");
+const documentsRoot = resolve(
+  process.env.SCRIBEFLOW_DOCUMENTS_ROOT || defaultDocumentsRoot,
+);
+const notesRoot = resolve(documentsRoot, "Notes");
+const templatesRoot = resolve(documentsRoot, "Templates");
+const templatesFile = resolve(templatesRoot, "templates.json");
+const templateBackupsRoot = resolve(templatesRoot, "Backups");
+const legacyTemplatesFile = resolve(dataRoot, "templates.json");
+const legacyTemplateBackupsRoot = resolve(dataRoot, "template-backups");
 const downloadsRoot = resolve(process.env.USERPROFILE || homedir(), "Downloads");
 const host = "127.0.0.1";
 const configuredPort = Number.parseInt(
@@ -75,6 +87,7 @@ const port =
     ? configuredPort
     : 3001;
 const maxTemplateBytes = 5 * 1024 * 1024;
+const maxNoteBytes = 2 * 1024 * 1024;
 const maxPdfDeleteRequestBytes = 8 * 1024;
 const allowedOrigins = new Set([
   "http://localhost:3000",
@@ -382,19 +395,23 @@ function readTemplatePayload(path) {
   }
 }
 
-function readDurableTemplates() {
-  const primary = readTemplatePayload(templatesFile);
+function readTemplatesFrom(primaryFile, backupsRoot) {
+  const primary = readTemplatePayload(primaryFile);
   if (primary) return primary;
-  if (!existsSync(templateBackupsRoot)) return null;
-  const backups = readdirSync(templateBackupsRoot)
+  if (!existsSync(backupsRoot)) return null;
+  const backups = readdirSync(backupsRoot)
     .filter((file) => /^templates-\d+\.json$/.test(file))
     .sort()
     .reverse();
   for (const backup of backups) {
-    const payload = readTemplatePayload(resolve(templateBackupsRoot, backup));
+    const payload = readTemplatePayload(resolve(backupsRoot, backup));
     if (payload) return payload;
   }
   return null;
+}
+
+function readDurableTemplates() {
+  return readTemplatesFrom(templatesFile, templateBackupsRoot);
 }
 
 function writeDurableTemplates(payload) {
@@ -427,6 +444,32 @@ function writeDurableTemplates(payload) {
     unlinkSync(resolve(templateBackupsRoot, backup));
   });
 }
+
+function migrateLegacyTemplates() {
+  const legacyPayload = readTemplatesFrom(
+    legacyTemplatesFile,
+    legacyTemplateBackupsRoot,
+  );
+  if (!legacyPayload) return;
+
+  const syncedPayload = readDurableTemplates();
+  if (!syncedPayload || legacyPayload.updatedAt > syncedPayload.updatedAt) {
+    writeDurableTemplates(legacyPayload);
+  }
+
+  const verifiedPayload = readDurableTemplates();
+  if (!verifiedPayload || verifiedPayload.updatedAt < legacyPayload.updatedAt) {
+    return;
+  }
+  if (existsSync(legacyTemplatesFile)) {
+    unlinkSync(legacyTemplatesFile);
+  }
+  if (existsSync(legacyTemplateBackupsRoot)) {
+    rmSync(legacyTemplateBackupsRoot, { recursive: true, force: true });
+  }
+}
+
+migrateLegacyTemplates();
 
 const server = createServer((request, response) => {
   const origin = request.headers.origin;
@@ -515,6 +558,49 @@ const server = createServer((request, response) => {
     });
     return;
   }
+  if (url.pathname === "/documents/save-note") {
+    if (request.method !== "POST") {
+      sendText(response, 405, "Method not allowed");
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    let rejected = false;
+    request.on("data", (chunk) => {
+      if (rejected) return;
+      size += chunk.length;
+      if (size > maxNoteBytes) {
+        rejected = true;
+        sendText(response, 413, "The note is too large to save");
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      if (rejected) return;
+      try {
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (
+          !payload ||
+          typeof payload !== "object" ||
+          typeof payload.title !== "string" ||
+          typeof payload.note !== "string" ||
+          typeof payload.noteHtml !== "string"
+        ) {
+          sendText(response, 400, "Invalid note");
+          return;
+        }
+        const saved = saveNoteDocument(notesRoot, payload);
+        sendJson(response, 201, {
+          fileName: saved.fileName,
+          folder: notesRoot,
+        });
+      } catch {
+        sendText(response, 500, "The note could not be saved");
+      }
+    });
+    return;
+  }
   if (url.pathname === "/config/templates") {
     if (request.method === "GET" || request.method === "HEAD") {
       const payload = readDurableTemplates();
@@ -554,7 +640,7 @@ const server = createServer((request, response) => {
             return;
           }
           writeDurableTemplates(payload);
-          sendText(response, 200, "Templates protected locally");
+          sendText(response, 200, "Templates protected in Documents");
         } catch {
           sendText(response, 400, "Invalid template backup");
         }
