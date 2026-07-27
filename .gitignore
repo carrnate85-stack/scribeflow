@@ -42,3 +42,21 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/.scribeflow/
+/local-models/
+/public/wasm/ort-wasm-*
+
+# ScribeFlow private/local data
+/runtime/
+/template-backups/
+/templates.json
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.pdf
+
+# Generated Windows installer packages
+/release/
+/ScribeFlow-Online-Installer/
+/ScribeFlow-Windows-Online-Installer.zip
