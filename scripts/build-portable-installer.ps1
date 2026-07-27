@@ -18,6 +18,7 @@ $outputLeaf = [IO.Path]::GetFileName($resolvedOutputRoot)
 $stagingRoot = Join-Path $outputParent "$outputLeaf.building"
 $payloadRoot = Join-Path $stagingRoot "payload"
 $archivePath = Join-Path $outputParent "ScribeFlow-Windows-Online-Installer.zip"
+$archiveChecksumPath = "$archivePath.sha256"
 $includesPatientData = $false
 $includeLargeModel = $false
 
@@ -47,11 +48,17 @@ Assert-SafeGeneratedPath `
 Assert-SafeGeneratedPath `
     -Path $archivePath `
     -AllowedLeafNames @("ScribeFlow-Windows-Online-Installer.zip")
+Assert-SafeGeneratedPath `
+    -Path $archiveChecksumPath `
+    -AllowedLeafNames @("ScribeFlow-Windows-Online-Installer.zip.sha256")
 
 foreach ($requiredSource in @(
+    (Join-Path $projectRoot "package.json"),
     (Join-Path $installerRoot "Install ScribeFlow.cmd"),
     (Join-Path $installerRoot "Install-ScribeFlow.ps1"),
     (Join-Path $projectRoot "Launch ScribeFlow.cmd"),
+    (Join-Path $projectRoot "scripts\start-scribeflow.ps1"),
+    (Join-Path $projectRoot "scripts\update-scribeflow.ps1"),
     (Join-Path $projectRoot "scripts\launch-scribeflow.ps1"),
     (Join-Path $projectRoot "scripts\install-native-whisper.ps1")
 )) {
@@ -94,6 +101,14 @@ foreach ($generatedPath in @($stagingRoot, $resolvedOutputRoot)) {
 }
 New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
 
+$packageJson = Get-Content -LiteralPath (
+    Join-Path $projectRoot "package.json"
+) -Raw | ConvertFrom-Json
+$appVersion = [string]$packageJson.version
+if ($appVersion -notmatch "^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$") {
+    throw "package.json contains an invalid ScribeFlow version."
+}
+
 Copy-Item `
     -LiteralPath (Join-Path $projectRoot "dist") `
     -Destination (Join-Path $payloadRoot "dist") `
@@ -116,6 +131,15 @@ Copy-Item `
     -LiteralPath (Join-Path $installerRoot "Install-ScribeFlow.ps1") `
     -Destination (Join-Path $stagingRoot "Install-ScribeFlow.ps1") `
     -Force
+
+[ordered]@{
+    name = "ScribeFlow"
+    version = $appVersion
+    releaseRepository = "carrnate85-stack/scribeflow"
+} |
+    ConvertTo-Json |
+    Set-Content -LiteralPath (Join-Path $payloadRoot "app-version.json") `
+        -Encoding UTF8
 
 $nodeVersion = "v22.13.1"
 $nodeArchiveName = "node-$nodeVersion-win-x64.zip"
@@ -162,10 +186,11 @@ if ($actualNodeSha256 -ne $expectedNodeSha256) {
 }
 
 $nodeExtractRoot = Join-Path $stagingRoot "node-extract"
-Expand-Archive `
-    -LiteralPath $nodeArchive `
-    -DestinationPath $nodeExtractRoot `
-    -Force
+New-Item -ItemType Directory -Path $nodeExtractRoot -Force | Out-Null
+& tar.exe -xf $nodeArchive -C $nodeExtractRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "The portable Node.js runtime could not be extracted."
+}
 $extractedNodeRoot = Get-ChildItem `
     -LiteralPath $nodeExtractRoot `
     -Directory |
@@ -184,7 +209,7 @@ Remove-Item -LiteralPath $nodeExtractRoot -Recurse -Force
 
 $manifest = [ordered]@{
     name = "ScribeFlow"
-    version = "0.1.0"
+    version = $appVersion
     createdUtc = (Get-Date).ToUniversalTime().ToString("o")
     includesPatientData = $includesPatientData
     includesTemplates = $false
@@ -192,7 +217,7 @@ $manifest = [ordered]@{
     includesPdfs = $false
     includesLargeModel = $includeLargeModel
     speechModel = "ggml-large-v3.bin"
-    speechModelInstall = "downloaded and checksum-verified during installation"
+    speechModelInstall = "downloaded and checksum-verified from inside ScribeFlow"
     nodeVersion = $nodeVersion
     nodeSha256 = $actualNodeSha256
 }
@@ -209,9 +234,17 @@ Compress-Archive `
     -Path (Join-Path $resolvedOutputRoot "*") `
     -DestinationPath $archivePath `
     -CompressionLevel Optimal
+$archiveSha256 = (
+    Get-FileHash -LiteralPath $archivePath -Algorithm SHA256
+).Hash
+Set-Content `
+    -LiteralPath $archiveChecksumPath `
+    -Value "$archiveSha256  $([IO.Path]::GetFileName($archivePath))" `
+    -Encoding ASCII
 
 Write-Host ""
 Write-Host "ScribeFlow installer created:" -ForegroundColor Green
 Write-Host $archivePath
-Write-Host "The verified Whisper Large-v3 model downloads during installation."
+Write-Host $archiveChecksumPath
+Write-Host "Whisper remains separate and installs from inside ScribeFlow."
 Write-Host "No templates, notes, PDFs, audio, or patient data were included."

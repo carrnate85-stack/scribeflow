@@ -44,6 +44,18 @@ type VocabularyItem = {
 
 type DictationEngine = "whisper" | "chrome";
 
+type WhisperInstallStatus = {
+  status:
+    | "checking"
+    | "missing"
+    | "installing"
+    | "starting"
+    | "installed"
+    | "failed";
+  installed: boolean;
+  message: string;
+};
+
 type MicrophoneOption = {
   deviceId: string;
   label: string;
@@ -893,6 +905,12 @@ export default function Home() {
   const [whisperSupported, setWhisperSupported] = useState(true);
   const [whisperReady, setWhisperReady] = useState(false);
   const [whisperProgress, setWhisperProgress] = useState(0);
+  const [whisperInstallStatus, setWhisperInstallStatus] =
+    useState<WhisperInstallStatus>({
+      status: "checking",
+      installed: false,
+      message: "Checking Whisper on this computer.",
+    });
   const [currentToken, setCurrentToken] = useState("");
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
@@ -1629,28 +1647,107 @@ export default function Home() {
     return whisperLoadPromiseRef.current;
   }, [whisperReady]);
 
-  useEffect(() => {
-    if (dictationEngine === "whisper" && whisperSupported) {
-      setStatus(
-        whisperReady
-          ? "Ready · Whisper local"
-          : "Loading local Whisper model",
+  const refreshWhisperInstallStatus = useCallback(async () => {
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:3001/whisper/install-status",
+        { cache: "no-store" },
       );
-      void ensureWhisperWorker().catch((error) => {
-        setStatus("Local Whisper unavailable");
-        setToast(
-          error instanceof Error
-            ? error.message
-            : "The local Whisper model could not load",
-        );
+      if (!response.ok) throw new Error("Whisper status is unavailable");
+      const payload = (await response.json()) as WhisperInstallStatus;
+      setWhisperInstallStatus(payload);
+    } catch {
+      setWhisperInstallStatus({
+        status: "failed",
+        installed: false,
+        message:
+          "ScribeFlow could not check Whisper. Close and reopen ScribeFlow, then try again.",
       });
     }
+  }, []);
+
+  const installWhisper = useCallback(async () => {
+    setWhisperInstallStatus({
+      status: "installing",
+      installed: false,
+      message:
+        "Starting the verified Whisper download. Keep ScribeFlow open.",
+    });
+    try {
+      const response = await fetch("http://127.0.0.1:3001/whisper/install", {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Whisper installation could not start");
+      const payload = (await response.json()) as WhisperInstallStatus;
+      setWhisperInstallStatus(payload);
+    } catch (error) {
+      setWhisperInstallStatus({
+        status: "failed",
+        installed: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Whisper installation could not start",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshWhisperInstallStatus();
+  }, [refreshWhisperInstallStatus]);
+
+  useEffect(() => {
+    if (
+      whisperInstallStatus.status !== "installing" &&
+      whisperInstallStatus.status !== "starting"
+    ) {
+      return;
+    }
+    const timer = window.setInterval(
+      () => void refreshWhisperInstallStatus(),
+      2000,
+    );
+    return () => window.clearInterval(timer);
+  }, [refreshWhisperInstallStatus, whisperInstallStatus.status]);
+
+  useEffect(() => {
+    if (
+      dictationEngine !== "whisper" ||
+      !whisperSupported ||
+      !whisperInstallStatus.installed ||
+      whisperReady
+    ) {
+      return;
+    }
+
+    setStatus("Starting local Whisper");
+    const connect = () => {
+      void ensureWhisperWorker()
+        .then(() => setStatus("Ready · Whisper local"))
+        .catch(() => setStatus("Starting local Whisper"));
+    };
+    connect();
+    const timer = window.setInterval(connect, 3000);
+    return () => window.clearInterval(timer);
   }, [
     dictationEngine,
     ensureWhisperWorker,
     whisperReady,
+    whisperInstallStatus.installed,
     whisperSupported,
   ]);
+
+  useEffect(() => {
+    if (dictationEngine !== "whisper" || whisperReady) return;
+    if (whisperInstallStatus.status === "installing") {
+      setStatus("Installing Whisper locally");
+    } else if (
+      whisperInstallStatus.status === "missing" ||
+      whisperInstallStatus.status === "failed"
+    ) {
+      setStatus("Whisper installation recommended");
+    }
+  }, [dictationEngine, whisperInstallStatus.status, whisperReady]);
 
   useEffect(
     () => () => {
@@ -2781,7 +2878,9 @@ export default function Home() {
 
   const wordCount = note.trim() ? note.trim().split(/\s+/).length : 0;
   const activeEngineSupported =
-    dictationEngine === "whisper" ? whisperSupported : speechSupported;
+    dictationEngine === "whisper"
+      ? whisperSupported && whisperReady
+      : speechSupported;
 
   return (
     <main className="app-shell">
@@ -2813,6 +2912,54 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {dictationEngine === "whisper" && !whisperReady && (
+        <section
+          className={`whisper-setup-banner ${whisperInstallStatus.status}`}
+          aria-live="polite"
+        >
+          <div>
+            <strong>
+              {whisperInstallStatus.status === "installing"
+                ? "Installing Whisper on this computer"
+                : whisperInstallStatus.status === "starting"
+                  ? "Starting Whisper"
+                  : whisperInstallStatus.installed
+                    ? "Whisper needs attention"
+                    : "Whisper is recommended"}
+            </strong>
+            <span>{whisperInstallStatus.message}</span>
+          </div>
+          {!whisperInstallStatus.installed &&
+            whisperInstallStatus.status !== "installing" &&
+            whisperInstallStatus.status !== "starting" &&
+            whisperInstallStatus.status !== "checking" && (
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => void installWhisper()}
+              >
+                {whisperInstallStatus.status === "failed"
+                  ? "Try Whisper install again"
+                  : "Install Whisper"}
+              </button>
+            )}
+          {whisperInstallStatus.installed &&
+            whisperInstallStatus.status === "installed" && (
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => void installWhisper()}
+              >
+                Repair or update Whisper
+              </button>
+            )}
+          {(whisperInstallStatus.status === "installing" ||
+            whisperInstallStatus.status === "starting") && (
+            <span className="whisper-install-spinner" aria-hidden="true" />
+          )}
+        </section>
+      )}
 
       <div className="workspace">
         <aside className="library-panel">

@@ -2,7 +2,7 @@
 setlocal
 title ScribeFlow Launcher
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launch-scribeflow.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-scribeflow.ps1"
 
 if errorlevel 1 (
   echo.

@@ -267,10 +267,12 @@ if (
     -not (Test-Path -LiteralPath $nativeWhisperServer) -or
     -not (Test-Path -LiteralPath $nativeWhisperModel)
 ) {
-    throw "Native Whisper Large-v3 is missing. Run scripts\install-native-whisper.ps1 once, then launch ScribeFlow again."
+    Write-Host (
+        "Whisper Large-v3 is not installed yet. " +
+        "ScribeFlow will offer to install it inside the app."
+    ) -ForegroundColor Yellow
 }
-
-if (-not (Get-NativeWhisperResponse -Port $nativeWhisperPort)) {
+elseif (-not (Get-NativeWhisperResponse -Port $nativeWhisperPort)) {
     if (-not (Test-PortAvailable -Port $nativeWhisperPort)) {
         throw "Port 3002 is being used by another app. Close that app so ScribeFlow can start its loopback-only native Whisper service."
     }

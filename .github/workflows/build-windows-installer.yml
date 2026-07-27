@@ -45,7 +45,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ScribeFlow-Windows-Online-Installer
-          path: ${{ runner.temp }}/ScribeFlow-Windows-Online-Installer.zip
+          path: |
+            ${{ runner.temp }}/ScribeFlow-Windows-Online-Installer.zip
+            ${{ runner.temp }}/ScribeFlow-Windows-Online-Installer.zip.sha256
           if-no-files-found: error
 
       - name: Publish tagged release
@@ -54,12 +56,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $asset = "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip"
+          $assets = @(
+            "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip",
+            "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip.sha256"
+          )
           if (gh release view "${{ github.ref_name }}" 2>$null) {
-            gh release upload "${{ github.ref_name }}" $asset --clobber
+            gh release upload "${{ github.ref_name }}" @assets --clobber
           }
           else {
-            gh release create "${{ github.ref_name }}" $asset `
+            gh release create "${{ github.ref_name }}" @assets `
               --generate-notes `
               --title "ScribeFlow ${{ github.ref_name }}"
           }

@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [switch]$NoLaunch,
-    [switch]$SkipModelDownload
+    [switch]$NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +16,7 @@ $settingsRoot = Join-Path $env:LOCALAPPDATA "ScribeFlow"
 $runtimeStateRoot = Join-Path $settingsRoot "runtime"
 $nodePath = Join-Path $payloadRoot "runtime\node\node.exe"
 $launcherPath = Join-Path $payloadRoot "Launch ScribeFlow.cmd"
-$modelInstallerPath = Join-Path $payloadRoot "scripts\install-native-whisper.ps1"
+$versionPath = Join-Path $payloadRoot "app-version.json"
 
 function Assert-SafeInstallPath {
     param([string]$Path)
@@ -79,13 +78,28 @@ foreach ($requiredPath in @(
     $payloadRoot,
     $nodePath,
     $launcherPath,
-    $modelInstallerPath,
+    $versionPath,
+    (Join-Path $payloadRoot "scripts\start-scribeflow.ps1"),
+    (Join-Path $payloadRoot "scripts\update-scribeflow.ps1"),
+    (Join-Path $payloadRoot "scripts\install-native-whisper.ps1"),
     (Join-Path $payloadRoot "dist\server\index.js"),
     (Join-Path $payloadRoot "dist\client")
 )) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         throw "The installer payload is incomplete: $requiredPath"
     }
+}
+
+$appVersion = try {
+    [string](
+        (Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json).version
+    )
+}
+catch {
+    throw "The installer version information is invalid."
+}
+if ($appVersion -notmatch "^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$") {
+    throw "The installer version information is invalid."
 }
 
 Assert-SafeInstallPath -Path $installRoot
@@ -143,7 +157,7 @@ $startMenuShortcut.Save()
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScribeFlow"
 New-Item -Path $uninstallKey -Force | Out-Null
 Set-ItemProperty -Path $uninstallKey -Name DisplayName -Value "ScribeFlow"
-Set-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value "0.1.0"
+Set-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $appVersion
 Set-ItemProperty -Path $uninstallKey -Name Publisher -Value "ScribeFlow"
 Set-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $installRoot
 Set-ItemProperty -Path $uninstallKey -Name UninstallString -Value (
@@ -156,23 +170,12 @@ New-ItemProperty -Path $uninstallKey -Name NoModify -PropertyType DWord `
 New-ItemProperty -Path $uninstallKey -Name NoRepair -PropertyType DWord `
     -Value 1 -Force | Out-Null
 
-if (-not $SkipModelDownload) {
-    Write-Host ""
-    Write-Host "Installing the verified local speech model..." -ForegroundColor Cyan
-    & powershell.exe `
-        -NoProfile `
-        -ExecutionPolicy Bypass `
-        -File (Join-Path $installRoot "scripts\install-native-whisper.ps1")
-    if ($LASTEXITCODE -ne 0) {
-        throw "ScribeFlow was copied, but the local speech model could not be installed. Run scripts\install-native-whisper.ps1 to retry."
-    }
-}
-
 Write-Host ""
 Write-Host "ScribeFlow was installed successfully." -ForegroundColor Green
 Write-Host "Templates remain protected in $settingsRoot"
+Write-Host "Whisper is kept separately and can be installed inside ScribeFlow."
 Write-Host "No notes, PDFs, audio, templates, or patient data were included."
 
-if (-not $NoLaunch -and -not $SkipModelDownload) {
+if (-not $NoLaunch) {
     Start-Process -FilePath $installedLauncher
 }

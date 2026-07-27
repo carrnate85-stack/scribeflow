@@ -141,6 +141,65 @@ button:disabled {
   gap: 10px;
 }
 
+.whisper-setup-banner {
+  width: min(1540px, 100%);
+  min-height: 70px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  color: #4f3b17;
+  background: #fff7dc;
+  border-bottom: 1px solid #ead89a;
+}
+
+.whisper-setup-banner > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.whisper-setup-banner strong {
+  font-size: 13px;
+}
+
+.whisper-setup-banner span {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.whisper-setup-banner.installing,
+.whisper-setup-banner.starting,
+.whisper-setup-banner.installed {
+  color: #285146;
+  background: #edf7f2;
+  border-bottom-color: #c9dfd5;
+}
+
+.whisper-setup-banner.failed {
+  color: #753f31;
+  background: #fff0eb;
+  border-bottom-color: #efc7bb;
+}
+
+.whisper-install-spinner {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 3px solid rgba(22, 79, 67, 0.2);
+  border-top-color: var(--forest);
+  border-radius: 50%;
+  animation: whisper-install-spin 800ms linear infinite;
+}
+
+@keyframes whisper-install-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .button,
 .toolbar-button,
 .icon-button,
@@ -1625,6 +1684,15 @@ kbd {
   .workspace {
     min-height: calc(100vh - 64px);
     display: block;
+  }
+
+  .whisper-setup-banner {
+    padding: 12px 16px;
+    align-items: flex-start;
+  }
+
+  .whisper-setup-banner .button {
+    min-width: 128px;
   }
 
   .library-panel {

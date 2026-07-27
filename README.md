@@ -57,20 +57,31 @@ model. On the destination computer:
 1. Download the installer ZIP from the repository's **Releases** page.
 2. Extract the complete ZIP.
 3. Double-click `Install ScribeFlow.cmd`.
-4. Keep the computer online while the official whisper.cpp CUDA runtime and
-   verified Whisper Large-v3 model download.
+4. Open ScribeFlow from its desktop shortcut.
+5. If Whisper is not present, ScribeFlow recommends it in the app. Click
+   **Install Whisper** and keep ScribeFlow open during the verified download.
 
-Installation does not require administrator access. The first installation
-downloads approximately 3.2 GB for the speech model. Upgrades preserve
-templates and local settings under `%LOCALAPPDATA%\ScribeFlow`; patient notes,
-PDFs, audio, templates, and browser storage are never included in the installer.
+Installation does not require administrator access. The ScribeFlow installer
+stays small and never contains or automatically transfers the approximately
+3.2 GB speech model. Whisper downloads only after the in-app recommendation is
+accepted. App upgrades preserve both Whisper and local settings under
+`%LOCALAPPDATA%\ScribeFlow`; patient notes, PDFs, audio, templates, and browser
+storage are never included in the installer.
+
+Each normal ScribeFlow launch checks this public repository's latest Release.
+When a newer version is available, the launcher downloads both the installer
+and its SHA-256 file, verifies the package, applies the update, and then opens
+ScribeFlow. If GitHub is unavailable, the update is skipped and the installed
+version opens normally.
 
 The `Build Windows installer` GitHub Actions workflow builds and tests the app
 and creates the same ZIP. Running it manually produces a downloadable workflow
 artifact. Pushing a tag such as `v0.1.0` also publishes the ZIP on the
-repository's **Releases** page.
+repository's **Releases** page together with its SHA-256 file.
 
-Native Whisper is installed once with:
+Native Whisper remains a separate local component even though its controls are
+built into ScribeFlow. This keeps large model files out of GitHub and out of app
+updates. For troubleshooting, the same verified installer can be run directly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-native-whisper.ps1

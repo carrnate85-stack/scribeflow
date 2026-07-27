@@ -54,6 +54,14 @@ test("includes quicktext, template, and local-save workflows", async () => {
     new URL("../scripts/launch-scribeflow.ps1", import.meta.url),
     "utf8",
   );
+  const startLauncher = await readFile(
+    new URL("../scripts/start-scribeflow.ps1", import.meta.url),
+    "utf8",
+  );
+  const appUpdater = await readFile(
+    new URL("../scripts/update-scribeflow.ps1", import.meta.url),
+    "utf8",
+  );
   const styles = await readFile(
     new URL("../app/globals.css", import.meta.url),
     "utf8",
@@ -84,6 +92,13 @@ test("includes quicktext, template, and local-save workflows", async () => {
   );
   const installer = await readFile(
     new URL("../installer/Install-ScribeFlow.ps1", import.meta.url),
+    "utf8",
+  );
+  const installerWorkflow = await readFile(
+    new URL(
+      "../.github/workflows/build-windows-installer.yml",
+      import.meta.url,
+    ),
     "utf8",
   );
   const worker = await readFile(
@@ -160,6 +175,11 @@ test("includes quicktext, template, and local-save workflows", async () => {
   );
   assert.match(page, /flushWhisperAudio/);
   assert.match(page, /Whisper Large-v3 unquantized · native CUDA · no API/);
+  assert.match(page, /Whisper is recommended/);
+  assert.match(page, /Install Whisper/);
+  assert.match(page, /Repair or update Whisper/);
+  assert.match(page, /\/whisper\/install-status/);
+  assert.match(page, /\/whisper\/install/);
   assert.match(page, /Audio is processed in memory on this computer/);
   assert.match(page, /Whisper local/);
   assert.match(page, /Chrome offline/);
@@ -311,6 +331,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(nativeWhisperInstaller, /No audio was uploaded/);
   assert.match(localModelServer, /server\.listen\(port, host/);
   assert.match(localModelServer, /const host = "127\.0\.0\.1"/);
+  assert.match(localModelServer, /process\.env\.SCRIBEFLOW_MODEL_PORT/);
   assert.match(localModelServer, /const modelRoot = resolve\(dataRoot, "models"\)/);
   assert.match(localModelServer, /allowedOrigins/);
   assert.match(localModelServer, /process\.env\.LOCALAPPDATA/);
@@ -320,6 +341,15 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(localModelServer, /backups\.slice\(20\)/);
   assert.match(localModelServer, /deleteVerifiedPdf\(downloadsRoot, payload\)/);
   assert.match(localModelServer, /\/files\/delete-uploaded-pdf/);
+  assert.match(localModelServer, /url\.pathname === "\/whisper\/install"/);
+  assert.match(
+    localModelServer,
+    /url\.pathname === "\/whisper\/install-status"/,
+  );
+  assert.match(localModelServer, /spawn\(\s*"powershell\.exe"/);
+  assert.match(localModelServer, /startNativeWhisperService/);
+  assert.match(localModelServer, /nativeWhisperPidFile/);
+  assert.match(localModelServer, /origin \|\| !allowedOrigins\.has\(origin\)/);
   assert.doesNotMatch(localModelServer, /\/config\/(?:notes|audio|pdf)/);
   assert.match(localModelServer, /!url\.pathname\.startsWith\("\/models\/"\)/);
   assert.match(
@@ -341,6 +371,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(launcher, /Join-Path \$portableNodeDirectory "node\.exe"/);
   assert.match(launcher, /http:\/\/127\.0\.0\.1:\$Port\/health/);
   assert.match(launcher, /WindowStyle Hidden/);
+  assert.match(launcher, /ScribeFlow will offer to install it inside the app/);
   assert.doesNotMatch(launcher, /3000\.\.3010/);
   assert.doesNotMatch(launcher, /Find-Pnpm|wrangler/);
   assert.match(portableWebServer, /createServer/);
@@ -348,9 +379,24 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(portableWebServer, /dist", "client"/);
   assert.match(installerBuilder, /includesPatientData = \$false/);
   assert.match(installerBuilder, /ggml-large-v3\.bin/);
+  assert.match(installerBuilder, /app-version\.json/);
+  assert.match(installerBuilder, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.match(installer, /\$installRoot = Join-Path \$programsRoot "ScribeFlow"/);
   assert.match(installer, /Templates remain protected/);
+  assert.match(installer, /Whisper is kept separately/);
+  assert.doesNotMatch(installer, /\$SkipModelDownload/);
+  assert.match(startLauncher, /update-scribeflow\.ps1/);
+  assert.match(startLauncher, /launch-scribeflow\.ps1/);
+  assert.match(
+    appUpdater,
+    /api\.github\.com\/repos\/\$releaseRepository\/releases\/latest/,
+  );
+  assert.match(appUpdater, /ScribeFlow-Windows-Online-Installer\.zip/);
+  assert.match(appUpdater, /Get-FileHash[\s\S]*?-Algorithm SHA256/);
+  assert.match(appUpdater, /Install-ScribeFlow\.ps1/);
+  assert.match(installerWorkflow, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.doesNotMatch(installerBuilder, /templates\.json|Downloads\\.*\.pdf/);
+  assert.match(styles, /\.whisper-setup-banner/);
   assert.match(
     styles,
     /\.interim-transcript\s*\{[\s\S]*?position: fixed;[\s\S]*?bottom: 154px;/,
