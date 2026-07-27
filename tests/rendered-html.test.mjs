@@ -224,7 +224,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /parseStoredTemplates/);
   assert.match(page, /parseTemplateVaultPayload/);
   assert.match(page, /http:\/\/127\.0\.0\.1:3001\/config\/templates/);
-  assert.match(page, /Protected on this PC/);
+  assert.match(page, /Synced in Documents/);
   assert.match(page, /Restoring your templates/);
   assert.match(page, /saveTemplate/);
   assert.match(
@@ -242,7 +242,9 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /duplicateTemplate/);
   assert.match(page, /deleteTemplate/);
   assert.match(page, /text\/html/);
-  assert.match(page, /downloadNote/);
+  assert.match(page, /saveNote/);
+  assert.match(page, /\/documents\/save-note/);
+  assert.match(page, /Save note to Documents/);
   assert.match(page, /handlePdfUpload/);
   assert.match(page, /showOpenFilePicker/);
   assert.match(page, /deletePdfAfterScan, setDeletePdfAfterScan\] = useState\(true\)/);
@@ -300,7 +302,8 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Date of Birth/);
   assert.match(page, /Gender/);
   assert.match(page, /gender\?\.toLowerCase\(\)/);
-  assert.match(page, /Memory only · not saved/);
+  assert.match(page, /Not saved · save to OneDrive/);
+  assert.match(page, /Saved in OneDrive/);
   assert.match(page, /legacyPatientDataStorageKeys/);
   assert.doesNotMatch(page, /localStorage\.setItem\(storageKeys\.note/);
   assert.doesNotMatch(page, /localStorage\.setItem\(storageKeys\.noteHtml/);
@@ -353,7 +356,24 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(localModelServer, /const modelRoot = resolve\(dataRoot, "models"\)/);
   assert.match(localModelServer, /allowedOrigins/);
   assert.match(localModelServer, /process\.env\.LOCALAPPDATA/);
-  assert.match(localModelServer, /"template-backups"/);
+  assert.match(localModelServer, /process\.env\.SCRIBEFLOW_DOCUMENTS_ROOT/);
+  assert.match(
+    localModelServer,
+    /const notesRoot = resolve\(documentsRoot, "Notes"\)/,
+  );
+  assert.match(
+    localModelServer,
+    /const templatesRoot = resolve\(documentsRoot, "Templates"\)/,
+  );
+  assert.match(
+    localModelServer,
+    /const templateBackupsRoot = resolve\(templatesRoot, "Backups"\)/,
+  );
+  assert.match(localModelServer, /migrateLegacyTemplates\(\)/);
+  assert.match(
+    localModelServer,
+    /url\.pathname === "\/documents\/save-note"/,
+  );
   assert.match(localModelServer, /url\.pathname === "\/config\/templates"/);
   assert.match(localModelServer, /if \(backups\.length === 0\)/);
   assert.match(localModelServer, /backups\.slice\(20\)/);
@@ -384,6 +404,11 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(launcher, /\$modelPort = 3001/);
   assert.match(launcher, /\$nativeWhisperPort = 3002/);
   assert.match(launcher, /\$env:LOCALAPPDATA/);
+  assert.match(launcher, /Get-ScribeFlowDocumentsRoot/);
+  assert.match(
+    launcher,
+    /\$env:SCRIBEFLOW_DOCUMENTS_ROOT = \$documentsRoot/,
+  );
   assert.match(launcher, /whisper-release\.json/);
   assert.match(launcher, /\$nativeWhisperModelFileName/);
   assert.match(launcher, /\$nativeWhisperRuntimeVersion/);
@@ -407,11 +432,13 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installerBuilder, /app-version\.json/);
   assert.match(installerBuilder, /whisper-release\.json/);
   assert.match(installerBuilder, /whisper-release-utils\.mjs/);
+  assert.match(installerBuilder, /document-storage-utils\.mjs/);
   assert.match(installerBuilder, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.match(installer, /\$installRoot = Join-Path \$programsRoot "ScribeFlow"/);
-  assert.match(installer, /Templates remain protected/);
+  assert.match(installer, /Templates sync through Documents\\ScribeFlow/);
   assert.match(installer, /Whisper is kept separately/);
   assert.match(installer, /whisper-release\.json/);
+  assert.match(installer, /document-storage-utils\.mjs/);
   assert.doesNotMatch(installer, /\$SkipModelDownload/);
   assert.match(startLauncher, /update-scribeflow\.ps1/);
   assert.match(startLauncher, /launch-scribeflow\.ps1/);

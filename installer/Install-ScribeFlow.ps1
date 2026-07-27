@@ -84,6 +84,7 @@ foreach ($requiredPath in @(
     (Join-Path $payloadRoot "scripts\install-native-whisper.ps1"),
     (Join-Path $payloadRoot "scripts\whisper-release.json"),
     (Join-Path $payloadRoot "scripts\whisper-release-utils.mjs"),
+    (Join-Path $payloadRoot "scripts\document-storage-utils.mjs"),
     (Join-Path $payloadRoot "dist\server\index.js"),
     (Join-Path $payloadRoot "dist\client")
 )) {
@@ -174,7 +175,7 @@ New-ItemProperty -Path $uninstallKey -Name NoRepair -PropertyType DWord `
 
 Write-Host ""
 Write-Host "ScribeFlow was installed successfully." -ForegroundColor Green
-Write-Host "Templates remain protected in $settingsRoot"
+Write-Host "Templates sync through Documents\ScribeFlow when the app opens."
 Write-Host "Whisper is kept separately and can be installed inside ScribeFlow."
 Write-Host "No notes, PDFs, audio, templates, or patient data were included."
 

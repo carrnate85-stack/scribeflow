@@ -1,8 +1,9 @@
 # ScribeFlow
 
-ScribeFlow is a focused, local-only clinical dictation workspace. It combines
+ScribeFlow is a focused, locally processed clinical dictation workspace. It combines
 bundled Whisper speech recognition with an editable note, reusable dot phrases,
-structured clinical templates, in-memory PDF parsing, and copy or text export.
+structured clinical templates, in-memory PDF parsing, and copy or OneDrive
+document saving.
 
 ## Included workflows
 
@@ -22,7 +23,8 @@ structured clinical templates, in-memory PDF parsing, and copy or text export.
 - Type a shortcut such as `.normalexam` followed by Space to expand quicktext.
 - Start from SOAP, follow-up, consultation, or procedure templates.
 - Create personal quicktexts that persist in the browser.
-- Copy or download the completed note.
+- Copy the completed note or save it directly to
+  `OneDrive\Documents\ScribeFlow\Notes`.
 
 ## Development
 
@@ -64,9 +66,10 @@ model. On the destination computer:
 Installation does not require administrator access. The ScribeFlow installer
 stays small and never contains or automatically transfers the approximately
 3.2 GB speech model. Whisper downloads only after the in-app recommendation is
-accepted. App upgrades preserve both Whisper and local settings under
-`%LOCALAPPDATA%\ScribeFlow`; patient notes, PDFs, audio, templates, and browser
-storage are never included in the installer.
+accepted. App upgrades preserve Whisper and local runtime settings under
+`%LOCALAPPDATA%\ScribeFlow`. Saved notes and reusable templates live under
+`OneDrive\Documents\ScribeFlow`; patient notes, PDFs, audio, templates, and
+browser storage are never included in the installer.
 
 Each normal ScribeFlow launch checks this public repository's latest Release.
 When a newer version is available, the launcher downloads both the installer
@@ -93,9 +96,10 @@ directly:
 powershell -ExecutionPolicy Bypass -File scripts\install-native-whisper.ps1
 ```
 
-The runtime and weights are kept outside OneDrive under
+The runtime, weights, logs, caches, and temporary service state are kept
+outside OneDrive under
 `%LOCALAPPDATA%\ScribeFlow\native-whisper`. The native inference service binds
-only to `127.0.0.1:3002`; the configuration vault remains on
+only to `127.0.0.1:3002`; the local document bridge remains on
 `127.0.0.1:3001`. Audio is submitted as an in-memory WAV buffer and the native
 server's file converter is disabled, so dictation is not written to disk.
 Runtime model loading has no remote fallback, and the app response has a
@@ -109,15 +113,22 @@ uploaded to the service or retained.
 
 ## Clinical use
 
-Notes, microphone samples, parsed PDF values, and PDFs are not written to app
-storage or transmitted. Audio samples are cleared after local transcription.
-Templates are protected outside the browser in
-`%LOCALAPPDATA%\ScribeFlow\templates.json`, with up to 20 timestamped local
-recovery copies. The browser copy is retained as an additional fallback, and
-the newest valid copy is restored when the app starts. Quicktexts, vocabulary
-corrections, and the selected dictation engine remain local browser
-configuration. Do not place patient identifiers in reusable configuration
-items.
+Notes remain in memory until **Save** is clicked. Saved notes are written as
+HTML documents under `OneDrive\Documents\ScribeFlow\Notes`. Microphone samples,
+parsed PDF values, and PDFs are not written to app storage or transmitted.
+Audio samples are cleared after local transcription.
+
+Templates and up to 20 timestamped recovery copies are protected under
+`OneDrive\Documents\ScribeFlow\Templates`, so they can follow the signed-in
+OneDrive account to another PC. A valid legacy template vault is migrated from
+`%LOCALAPPDATA%\ScribeFlow` once, verified, and then removed from the old local
+location. The browser copy remains an additional fallback, and the newest
+valid copy is restored when the app starts. Quicktexts, vocabulary corrections,
+and the selected dictation engine remain local browser configuration. Do not
+place patient identifiers in reusable configuration items.
+
+Only use OneDrive for protected health information when that account and your
+organization's configuration are approved for that purpose.
 
 Review all generated text before clinical use and complete your organization's
 privacy, security, and compliance review before entering protected health
