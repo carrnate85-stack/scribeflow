@@ -81,7 +81,13 @@ repository's **Releases** page together with its SHA-256 file.
 
 Native Whisper remains a separate local component even though its controls are
 built into ScribeFlow. This keeps large model files out of GitHub and out of app
-updates. For troubleshooting, the same verified installer can be run directly:
+updates. ScribeFlow compares the installed Whisper manifest with the version
+expected by the current app. When a future verified runtime or model update is
+available, the app keeps dictation working, shows a persistent notice, and asks
+**Update Whisper?** with **Yes, update Whisper** and **No, not now** choices.
+Choosing **No** closes the prompt for that session while leaving the update
+button visible. For troubleshooting, the same verified installer can be run
+directly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-native-whisper.ps1
