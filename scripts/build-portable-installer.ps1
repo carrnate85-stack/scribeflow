@@ -63,7 +63,8 @@ foreach ($requiredSource in @(
     (Join-Path $projectRoot "scripts\install-native-whisper.ps1"),
     (Join-Path $projectRoot "scripts\whisper-release.json"),
     (Join-Path $projectRoot "scripts\whisper-release-utils.mjs"),
-    (Join-Path $projectRoot "scripts\document-storage-utils.mjs")
+    (Join-Path $projectRoot "scripts\document-storage-utils.mjs"),
+    (Join-Path $projectRoot "assets\ScribeFlow.ico")
 )) {
     if (-not (Test-Path -LiteralPath $requiredSource)) {
         throw "Required installer source is missing: $requiredSource"
@@ -120,6 +121,11 @@ Copy-Item `
 Copy-Item `
     -LiteralPath (Join-Path $projectRoot "scripts") `
     -Destination (Join-Path $payloadRoot "scripts") `
+    -Recurse `
+    -Force
+Copy-Item `
+    -LiteralPath (Join-Path $projectRoot "assets") `
+    -Destination (Join-Path $payloadRoot "assets") `
     -Recurse `
     -Force
 Copy-Item `
