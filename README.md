@@ -5,6 +5,15 @@ bundled Whisper speech recognition with an editable note, reusable dot phrases,
 structured clinical templates, in-memory PDF parsing, and copy or OneDrive
 document saving.
 
+PDF templates can use `.pastmedicalhistory` to insert the Past Medical History
+section extracted from an onboarding form.
+
+PAP compliance reports have a separate local upload control. The `.cpap` field
+inserts a concise summary of usage, machine settings, 95th-percentile pressure
+when present, 95th-percentile leak, and residual AHI. The original PAP PDF is
+permanently deleted after a successful scan using filename, size, and SHA-256
+verification.
+
 ## Included workflows
 
 - Start and stop dictation with the microphone control or the backquote key

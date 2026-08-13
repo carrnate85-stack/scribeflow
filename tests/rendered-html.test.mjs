@@ -115,6 +115,17 @@ test("includes quicktext, template, and local-save workflows", async () => {
   );
 
   assert.match(page, /\.normalexam/);
+  assert.match(page, /\.cpap/);
+  assert.match(page, /extractCpapSummary/);
+  assert.match(page, /PAP PDF/);
+  assert.match(page, /handlePapPdfUpload/);
+  assert.match(page, /editingQuicktext/);
+  assert.match(page, /openQuicktextForm/);
+  assert.match(page, /deleteQuicktext/);
+  assert.match(page, /Quicktext deleted/);
+  assert.match(page, /Edit quicktext/);
+  assert.match(page, /PAP compliance summary ready for \.cpap/);
+  assert.match(page, /Original PDF permanently deleted/);
   assert.match(page, /SOAP Note/);
   assert.match(page, /Procedure Note/);
   assert.match(page, /SpeechRecognition/);
@@ -151,10 +162,25 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /collapseRepeatedWhisperPhrases/);
   assert.match(page, /repeatCount >= 3/);
   assert.match(page, /thank you\(\?:\\s\+for/);
-  assert.match(page, /Never add sign-offs or subtitle credits such as thank you/);
+  assert.match(
+    page,
+    /Never add sign-offs or transcription credits such as thank you/,
+  );
   assert.match(page, /subtitles\?\|captions\?/);
   assert.match(page, /amara\(\?:\\\.org\|\\s\+org\)/);
-  assert.match(page, /subtitle credits/);
+  assert.match(page, /gettranscribed\(\?:\\\.com\|\\s\+com\)/);
+  assert.match(page, /captions by GetTranscribed\.com/);
+  assert.match(page, /castingwords\(\?:\\\.com\|\\s\+com\)/);
+  assert.match(page, /transcription by CastingWords/);
+  assert.match(page, /eso\\s\+translation/);
+  assert.match(page, /transcription by ESO Translation/);
+  assert.match(
+    page,
+    /transcription\\s\+by\\s\+eso\\s\+translation\(\?:\\s\+by\)\?/,
+  );
+  assert.match(page, /\(\?:\\s\+by\\s\*\[—–-\]\?\)\?/);
+  assert.match(page, /transcription by ESO Translation by —/);
+  assert.match(page, /transcription credits/);
   assert.match(page, /previewWhisperAudio/);
   assert.match(page, /whisperLastPreviewSampleCountRef/);
   assert.match(page, /whisperSampleRateRef\.current \* 2\.5/);
@@ -162,14 +188,23 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Use preferred vocabulary only when it is actually spoken/);
   assert.match(
     page,
-    /silence\|blank audio\|no speech\|noise\|music\|inaudible\|clapping\|applause\|clicking\|clicing\|typing\|sighing\|scoffs\?\|whooshing\|whoosing\|coughs\?/,
+    /silence\|blank audio\|no speech\|noise\|music\|inaudible\|clapping\|applause\|clicking\|clicing\|typing\|sighing\|scoffs\?\|whooshing\|whoosing\|coughs\?\|sh\+h\+/,
   );
+  assert.match(page, /replace\(\/\\bsh\+h\+\\b\[\.\!\?,\]\*\/gi, " "\)/);
   assert.match(page, /replace\(\/\[\.!\?;:\]\+\/g, " "\)/);
   assert.match(page, /replace\(\/\(\?:\\s\*,\\s\*\)\{2,\}\/g, ", "\)/);
   assert.match(page, /replace\(\/\\s\*,\\s\*\/g, ", "\)/);
   assert.match(page, /replace\(\/,\\s\*\$\/g, ""\)/);
   assert.match(page, /Do not add automatic commas/);
   assert.match(page, /normalizeDictationPunctuation/);
+  const spokenPunctuationFunctionBody = page.match(
+    /function applySpokenPunctuation\(text: string, capitalizeStart = true\) \{([\s\S]*?)\n\}\n\nfunction normalizeDictationPunctuation/,
+  )?.[1];
+  assert.ok(spokenPunctuationFunctionBody);
+  assert.match(
+    spokenPunctuationFunctionBody,
+    /transcription\\s\+by\\s\+eso\\s\+translation/,
+  );
   const punctuationFunctionBody = page.match(
     /function normalizeDictationPunctuation\(text: string\) \{([\s\S]*?)\n\}/,
   )?.[1];
@@ -259,7 +294,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /PDF\.js may transfer and detach this buffer/);
   assert.match(page, /Promise\.resolve\(\)\.then\(\(\) => documentToClean\?\.cleanup\(\)\)/);
   assert.match(page, /Original PDF permanently deleted/);
-  assert.match(page, /Delete original after successful scan/);
+  assert.match(page, /Delete after import/);
   assert.match(page, /extractPdfMeasurements/);
   assert.match(page, /resolveMeasurementTokens/);
   assert.match(page, /insertTemplateField/);
@@ -274,6 +309,8 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /\.bmi/);
   assert.match(page, /\.meds/);
   assert.match(page, /\.allergies/);
+  assert.match(page, /\.pastmedicalhistory/);
+  assert.match(page, /pastMedicalHistory/);
   assert.match(page, /\.sleepquestionnaire/);
   assert.match(page, /\.ess/);
   assert.match(page, /\.familyhistory/);
@@ -282,6 +319,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Active Medications/);
   assert.match(page, /Medication Allergies/);
   assert.match(page, /Past Medical History/);
+  assert.match(page, /Past Surgical History\|Surgical History\|Sleep Questionnaire/);
   assert.match(page, /cleanMedicationListEnding/);
   assert.match(page, /replace\(\/\(\?:\\s\*\[-:\]\)\+\\s\*\$\/, ""\)/);
   assert.match(page, /Weight Health/);
@@ -296,7 +334,6 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /moderate: 2/);
   assert.match(page, /high: 3/);
   assert.match(page, /None\|Slight\|Moderate\|High/);
-  assert.match(page, /ESS section/);
   assert.match(page, /Patient reports the following social history/);
   assert.match(page, /calculateAgeFromDateOfBirth/);
   assert.match(page, /Date of Birth/);
@@ -420,6 +457,12 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(launcher, /portableNodeDirectory/);
   assert.match(launcher, /Join-Path \$portableNodeDirectory "node\.exe"/);
   assert.match(launcher, /http:\/\/127\.0\.0\.1:\$Port\/health/);
+  assert.match(
+    launcher,
+    /http:\/\/127\.0\.0\.1:\$Port\/\?launch=\$launchToken/,
+  );
+  assert.match(launcher, /ToUnixTimeMilliseconds/);
+  assert.doesNotMatch(launcher, /http:\/\/localhost:\$Port/);
   assert.match(launcher, /WindowStyle Hidden/);
   assert.match(launcher, /ScribeFlow will offer to install it inside the app/);
   assert.doesNotMatch(launcher, /3000\.\.3010/);
@@ -465,4 +508,69 @@ test("includes quicktext, template, and local-save workflows", async () => {
   );
   assert.match(styles, /\.dictation-dock\.recording/);
   assert.match(page, /aria-label="Persistent dictation controls"/);
+});
+
+test("extracts past medical history only through the next section", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const patternSource = page.match(
+    /pastMedicalHistory:\s*findSection\(\s*(\/Past Medical History:[^\r\n]+\/i)/,
+  )?.[1];
+  assert.ok(patternSource, "Past medical history extraction pattern is missing");
+
+  const pattern = Function(`"use strict"; return (${patternSource});`)();
+  const intakeText = [
+    "Medication Allergies: None",
+    "Past Medical History:",
+    "The patient has the following past medical history:",
+    "Asthma",
+    "Hypertension",
+    "Past Surgical History:",
+    "Appendectomy",
+  ].join("\n");
+  const extracted = intakeText.match(pattern)?.[1]
+    ?.split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  assert.equal(extracted, "Asthma\nHypertension");
+});
+
+test("summarizes PAP compliance metrics for the .cpap field", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const functionBody = page.match(
+    /function extractCpapSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction extractPdfMeasurements/,
+  )?.[1];
+  assert.ok(functionBody, "PAP compliance extraction function is missing");
+
+  const runnableBody = functionBody
+    .replace(/\(patterns: RegExp\[\]\)/g, "(patterns)")
+    .replace(/: string\[\]/g, "")
+    .replace(/\(value\): value is string/g, "(value)");
+  const extractCpapSummary = new Function("text", runnableBody);
+  const reportText = [
+    "Compliance Report",
+    "Usage 07/06/2026 - 08/04/2026",
+    "Usage days 28/30 days (93%)",
+    ">= 4 hours 23 days (77%)",
+    "Average usage (days used) 5 hours 20 minutes",
+    "Mode AutoSet",
+    "Min Pressure 7 cmH2O",
+    "Max Pressure 12 cmH2O",
+    "Pressure - cmH2O Median: 10.0 95th percentile: 11.5 Maximum: 11.8",
+    "Leaks - L/min Median: 14.5 95th percentile: 23.6 Maximum: 34.4",
+    "Events per hour AI: 0.4 HI: 0.1 AHI: 0.5",
+  ].join("\n");
+
+  assert.equal(
+    extractCpapSummary(reportText),
+    [
+      "PAP compliance period: 07/06/2026 - 08/04/2026.",
+      "Usage: 28/30 days (93%) used; >=4 hours 23 days (77%); average 5 hours 20 minutes on days used.",
+      "Settings: AutoSet 7-12 cmH2O.",
+      "95th percentile pressure: 11.5 cmH2O.",
+      "95th percentile leak: 23.6 L/min.",
+      "Residual AHI: 0.5 events/hour.",
+    ].join("\n"),
+  );
 });
