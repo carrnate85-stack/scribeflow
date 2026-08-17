@@ -3,8 +3,12 @@ name: Build Windows installer
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+
+concurrency:
+  group: scribeflow-release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -16,25 +20,68 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $package = Get-Content -LiteralPath "package.json" -Raw |
+            ConvertFrom-Json
+          $version = [string]$package.version
+          if ($version -notmatch "^\d+\.\d+\.\d+$") {
+            throw "package.json must contain a release version such as 0.1.4."
+          }
+
+          $tag = "v$version"
+          git fetch origin --tags --force
+          $existingTag = git tag --list $tag
+          $changedFiles = @(
+            git diff-tree --no-commit-id --name-only -r HEAD^ HEAD
+          )
+          $releaseFiles = @(
+            $changedFiles | Where-Object {
+              $_ -match "^(app|assets|installer|scripts)/" -or
+              $_ -in @("package.json", "Launch ScribeFlow.cmd")
+            }
+          )
+          $releaseNeeded = $releaseFiles.Count -gt 0
+
+          if ($releaseNeeded -and $existingTag) {
+            $tagCommit = (git rev-list -n 1 $tag).Trim()
+            if ($tagCommit -ne $env:GITHUB_SHA) {
+              throw "$tag already exists on $tagCommit. Bump package.json before merging app changes."
+            }
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_needed=$($releaseNeeded.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "tag_exists=$(([bool]$existingTag).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Install pnpm
+        if: steps.version.outputs.release_needed == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 11.9.0
 
       - name: Install Node.js
+        if: steps.version.outputs.release_needed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install dependencies
+        if: steps.version.outputs.release_needed == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Build and test
+        if: steps.version.outputs.release_needed == 'true'
         run: pnpm test
 
       - name: Create Windows installer
+        if: steps.version.outputs.release_needed == 'true'
         shell: pwsh
         run: |
           ./scripts/build-portable-installer.ps1 `
@@ -42,6 +89,7 @@ jobs:
             -OutputRoot "$env:RUNNER_TEMP\ScribeFlow-Online-Installer"
 
       - name: Upload installer artifact
+        if: steps.version.outputs.release_needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ScribeFlow-Windows-Online-Installer
@@ -51,20 +99,29 @@ jobs:
           if-no-files-found: error
 
       - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.version.outputs.release_needed == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $tag = "${{ steps.version.outputs.tag }}"
           $assets = @(
             "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip",
             "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip.sha256"
           )
-          if (gh release view "${{ github.ref_name }}" 2>$null) {
-            gh release upload "${{ github.ref_name }}" @assets --clobber
+          if ("${{ steps.version.outputs.tag_exists }}" -ne "true") {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a $tag $env:GITHUB_SHA -m "ScribeFlow $tag"
+            git push origin $tag
+          }
+
+          if (gh release view $tag 2>$null) {
+            gh release upload $tag @assets --clobber
           }
           else {
-            gh release create "${{ github.ref_name }}" @assets `
+            gh release create $tag @assets `
+              --target $env:GITHUB_SHA `
               --generate-notes `
-              --title "ScribeFlow ${{ github.ref_name }}"
+              --title "ScribeFlow $tag"
           }

@@ -45,7 +45,9 @@ test("renders the clinical dictation workspace", async () => {
 });
 
 test("includes quicktext, template, and local-save workflows", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = (
+    await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
+  ).replace(/\r\n/g, "\n");
   const packageJson = await readFile(
     new URL("../package.json", import.meta.url),
     "utf8",
@@ -537,7 +539,9 @@ test("extracts past medical history only through the next section", async () => 
 });
 
 test("summarizes PAP compliance metrics for the .cpap field", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = (
+    await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
+  ).replace(/\r\n/g, "\n");
   const functionBody = page.match(
     /function extractCpapSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction extractPdfMeasurements/,
   )?.[1];

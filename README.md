@@ -86,10 +86,14 @@ and its SHA-256 file, verifies the package, applies the update, and then opens
 ScribeFlow. If GitHub is unavailable, the update is skipped and the installed
 version opens normally.
 
-The `Build Windows installer` GitHub Actions workflow builds and tests the app
-and creates the same ZIP. Running it manually produces a downloadable workflow
-artifact. Pushing a tag such as `v0.1.0` also publishes the ZIP on the
-repository's **Releases** page together with its SHA-256 file.
+Owner-created `agent/*` pull requests are built and tested automatically. A
+verified update is marked ready and squash-merged without requiring a manual
+button click. App changes must increase the version in `package.json`.
+
+Every merged app version on `main` automatically receives its matching Git tag,
+verified Windows installer, SHA-256 file, and GitHub Release. This is the
+Release checked by installed desktop shortcuts, so a pushed update cannot remain
+stranded in an unpublished draft pull request.
 
 Native Whisper remains a separate local component even though its controls are
 built into ScribeFlow. This keeps large model files out of GitHub and out of app
