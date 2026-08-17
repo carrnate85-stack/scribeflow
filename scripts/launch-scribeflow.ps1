@@ -169,7 +169,7 @@ function Get-ScribeFlowResponse {
 
     try {
         $response = Invoke-WebRequest `
-            -Uri "http://localhost:$Port/" `
+            -Uri "http://127.0.0.1:$Port/" `
             -UseBasicParsing `
             -TimeoutSec 4
 
@@ -187,7 +187,7 @@ function Get-ScribeFlowResponse {
         }
 
         $stylesheet = Invoke-WebRequest `
-            -Uri "http://localhost:$Port$($stylesheetMatch.Groups['path'].Value)" `
+            -Uri "http://127.0.0.1:$Port$($stylesheetMatch.Groups['path'].Value)" `
             -UseBasicParsing `
             -TimeoutSec 4
 
@@ -291,7 +291,8 @@ function Find-Node {
 function Open-ScribeFlow {
     param([int]$Port)
 
-    $url = "http://localhost:$Port/"
+    $launchToken = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $url = "http://127.0.0.1:$Port/?launch=$launchToken"
     Write-Host "ScribeFlow is ready at $url" -ForegroundColor Green
 
     if (-not $NoBrowser) {

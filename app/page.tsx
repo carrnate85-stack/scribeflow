@@ -86,6 +86,7 @@ type WhisperWorkerResponse =
     };
 
 type PdfMeasurements = {
+  cpap?: string;
   name?: string;
   age?: string;
   gender?: string;
@@ -94,6 +95,7 @@ type PdfMeasurements = {
   bmi?: string;
   meds?: string;
   allergies?: string;
+  pastMedicalHistory?: string;
   sleepQuestionnaire?: string;
   ess?: string;
   familyHistory?: string;
@@ -101,6 +103,7 @@ type PdfMeasurements = {
 };
 
 const pdfFieldTokens = [
+  ".cpap",
   ".name",
   ".age",
   ".gender",
@@ -109,6 +112,7 @@ const pdfFieldTokens = [
   ".bmi",
   ".meds",
   ".allergies",
+  ".pastmedicalhistory",
   ".sleepquestionnaire",
   ".ess",
   ".familyhistory",
@@ -437,6 +441,10 @@ function plainTextToHtml(text: string) {
 function applySpokenPunctuation(text: string, capitalizeStart = true) {
   const punctuatedText = normalizeDictationPunctuation(
     text
+      .replace(
+        /\btranscription\s+by\s+eso\s+translation(?:\s+by)?(?:\s*[—–-])?/gi,
+        " ",
+      )
       .replace(/(^|\s)uh+(?:\s*[,;])?(?=\s|$)/gi, "$1")
       .replace(
         /[\[\(\{]\s*(new paragraph|new line|question mark|exclamation (?:mark|point)|semicolon|colon|comma|period|full stop)\s*[\]\)\}]/gi,
@@ -574,6 +582,89 @@ function formatImportedWeight(value: string | undefined) {
   return `${roundToOneDecimal(amount)} lbs (${roundToOneDecimal(kilograms)} kg)`;
 }
 
+function extractCpapSummary(text: string) {
+  const normalizedText = text.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+  const findValue = (patterns: RegExp[]) => {
+    for (const pattern of patterns) {
+      const match = normalizedText.match(pattern);
+      if (match?.[1]) return match[1].replace(/\s+/g, " ").trim();
+    }
+    return undefined;
+  };
+
+  const reportPeriod = findValue([
+    /\bUsage\s+(\d{1,2}\/\d{1,2}\/\d{2,4}\s*-\s*\d{1,2}\/\d{1,2}\/\d{2,4})\b/i,
+    /\bReport(?:ing)? Period\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4}\s*-\s*\d{1,2}\/\d{1,2}\/\d{2,4})\b/i,
+  ]);
+  const usageDays = findValue([
+    /\bUsage days\s+(\d+\/\d+(?:\s+days?)?\s*\(\d+%\))/i,
+    /\bDays used\s+(\d+\/\d+(?:\s+days?)?\s*\(\d+%\))/i,
+  ]);
+  const fourHourUsage = findValue([
+    />=\s*4\s*hours?\s+(\d+(?:\/\d+)?(?:\s+days?)?\s*\(\d+%\))/i,
+    /\b>=\s*4\s*hour days\s+(\d+(?:\/\d+)?(?:\s+days?)?\s*\(\d+%\))/i,
+  ]);
+  const averageUsage = findValue([
+    /\bAverage usage\s*\(days used\)\s+(\d+\s+hours?(?:\s+\d+\s+minutes?)?)/i,
+    /\bAverage usage\s*\(total days\)\s+(\d+\s+hours?(?:\s+\d+\s+minutes?)?)/i,
+  ]);
+  const mode = findValue([
+    /\bMode\s+(.{1,40}?)(?=\s+(?:(?:Set\s+)?(?:Min|Max|Set)\s+Pressure|Pressure\s*-\s*cmH2O|EPR|Ramp|AHI\b))/i,
+    /\bMode\s+([A-Za-z][A-Za-z0-9-]*)\b/i,
+  ]);
+  const minimumPressure = findValue([
+    /\b(?:Set\s+)?Min(?:imum)? Pressure\s+(\d+(?:\.\d+)?)\b/i,
+    /\bMin EPAP\s+(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const maximumPressure = findValue([
+    /\b(?:Set\s+)?Max(?:imum)? Pressure\s+(\d+(?:\.\d+)?)\b/i,
+    /\bMax IPAP\s+(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const fixedPressure = findValue([
+    /\bSet Pressure\s+(\d+(?:\.\d+)?)\b/i,
+    /\bCPAP Pressure\s+(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const pressure95 = findValue([
+    /\bPressure\s*-\s*cmH2O[\s\S]{0,120}?95th percentile\s*:\s*(\d+(?:\.\d+)?)\b/i,
+    /\b95(?:th)? percentile pressure\s*:?\s*(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const leak95 = findValue([
+    /\bLeaks?\s*-\s*L\/min[\s\S]{0,120}?95th percentile\s*:\s*(\d+(?:\.\d+)?)\b/i,
+    /\b95(?:th)? percentile leaks?\s*:?\s*(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const ahi = findValue([
+    /\bAHI(?:\s*\(events\/hour\))?\s*:?\s*(\d+(?:\.\d+)?)\b/i,
+  ]);
+
+  if (!usageDays && !fourHourUsage && !mode && !pressure95 && !leak95 && !ahi) {
+    return undefined;
+  }
+
+  const lines: string[] = [];
+  if (reportPeriod) lines.push(`PAP compliance period: ${reportPeriod}.`);
+
+  const usageParts = [
+    usageDays ? `${usageDays} used` : null,
+    fourHourUsage ? `>=4 hours ${fourHourUsage}` : null,
+    averageUsage ? `average ${averageUsage} on days used` : null,
+  ].filter((value): value is string => Boolean(value));
+  if (usageParts.length > 0) lines.push(`Usage: ${usageParts.join("; ")}.`);
+
+  let settings = mode;
+  if (minimumPressure && maximumPressure) {
+    settings = `${mode ? `${mode} ` : ""}${minimumPressure}-${maximumPressure} cmH2O`;
+  } else if (fixedPressure) {
+    settings = `${mode ? `${mode} ` : ""}${fixedPressure} cmH2O`;
+  }
+  if (settings) lines.push(`Settings: ${settings}.`);
+  if (pressure95) {
+    lines.push(`95th percentile pressure: ${pressure95} cmH2O.`);
+  }
+  if (leak95) lines.push(`95th percentile leak: ${leak95} L/min.`);
+  if (ahi) lines.push(`Residual AHI: ${ahi} events/hour.`);
+  return lines.join("\n");
+}
+
 function extractPdfMeasurements(text: string): PdfMeasurements {
   const normalizedText = text.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
   const sectionText = text
@@ -674,6 +765,9 @@ function extractPdfMeasurements(text: string): PdfMeasurements {
     allergies: findSection(
       /Medication Allergies:\s*(?:The patient is allergic to the following medications:\s*)?([\s\S]*?)\s*Past Medical History:/i,
     ),
+    pastMedicalHistory: findSection(
+      /Past Medical History:\s*(?:The patient (?:has|reports) the following (?:past )?medical history:\s*)?([\s\S]*?)(?=\s*(?:Past Surgical History|Surgical History|Sleep Questionnaire|Patient reports the following social history|Social History|Family History|Patient has had a sleep study|Active Medications|$))/i,
+    ),
     sleepQuestionnaire: findSection(
       /Sleep Questionnaire:\s*([\s\S]*?)\s*Epworth Sleep Score:/i,
     ),
@@ -700,6 +794,7 @@ function resolveMeasurementTokens(
   const fieldValue = (value: string | undefined, fallback: string) =>
     value ? (forHtml ? plainTextToHtml(value) : value) : fallback;
   return content
+    .replace(/\.cpap\b/gi, fieldValue(measurements.cpap, ".cpap"))
     .replace(
       /\.sleepquestionnaire\b/gi,
       fieldValue(measurements.sleepQuestionnaire, ".sleepquestionnaire"),
@@ -711,6 +806,10 @@ function resolveMeasurementTokens(
     .replace(
       /\.socialhistory\b/gi,
       fieldValue(measurements.socialHistory, ".socialhistory"),
+    )
+    .replace(
+      /\.pastmedicalhistory\b/gi,
+      fieldValue(measurements.pastMedicalHistory, ".pastmedicalhistory"),
     )
     .replace(/\.name\b/gi, fieldValue(measurements.name, ".name"))
     .replace(/\.age\b/gi, fieldValue(measurements.age, ".age"))
@@ -797,15 +896,28 @@ function encodePcm16Wav(audio: Float32Array, sampleRate = 16000) {
 function cleanWhisperTranscript(text: string) {
   const cleaned = text
     .replace(
-      /[\[(]\s*(?:silence|blank audio|no speech|noise|music|inaudible|clapping|applause|clicking|clicing|typing|sighing|scoffs?|whooshing|whoosing|coughs?)\s*[\])]/gi,
+      /[\[(]\s*(?:silence|blank audio|no speech|noise|music|inaudible|clapping|applause|clicking|clicing|typing|sighing|scoffs?|whooshing|whoosing|coughs?|sh+h+)\s*[\])]/gi,
       " ",
     )
+    .replace(/\bsh+h+\b[.!?,]*/gi, " ")
     .replace(
       /\s*(?:thank you(?:\s+for\s+(?:watching|listening))?|thanks\s+for\s+(?:watching|listening))[.!?]*\s*$/gi,
       " ",
     )
     .replace(
       /\b(?:subtitles?|captions?)\s+(?:by|provided\s+by)\s+(?:the\s+)?amara(?:\.org|\s+org)?(?:\s+community)?\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:subtitles?|captions?)\s+(?:by|provided\s+by)\s+gettranscribed(?:\.com|\s+com)?\b/gi,
+      " ",
+    )
+    .replace(
+      /\btranscription\s+by\s+eso\s+translation(?:\s+by)?(?:\s*[—–-])?/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:transcription|transcribed|subtitles?|captions?)\s+(?:by|provided\s+by)\s+(?:castingwords(?:\.com|\s+com)?|eso\s+translation)\b(?:\s+by\s*[—–-]?)?/gi,
       " ",
     )
     .replace(/[.!?;:]+/g, " ")
@@ -885,6 +997,9 @@ export default function Home() {
   const [pdfStatus, setPdfStatus] = useState(
     "Choose a PDF to extract intake and sleep fields",
   );
+  const [papPdfStatus, setPapPdfStatus] = useState(
+    "Choose a PAP compliance PDF to prepare .cpap",
+  );
   const [deletePdfAfterScan, setDeletePdfAfterScan] = useState(true);
   const [isScanningPdf, setIsScanningPdf] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -896,6 +1011,8 @@ export default function Home() {
   const [status, setStatus] = useState("Ready");
   const [toast, setToast] = useState("");
   const [showQuicktextForm, setShowQuicktextForm] = useState(false);
+  const [editingQuicktext, setEditingQuicktext] =
+    useState<Quicktext | null>(null);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
@@ -951,6 +1068,7 @@ export default function Home() {
   const isRecordingRef = useRef(false);
   const noteRef = useRef<HTMLDivElement | null>(null);
   const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const papPdfInputRef = useRef<HTMLInputElement | null>(null);
   const lastSelectionRef = useRef<Range | null>(null);
   const templateEditorRef = useRef<HTMLDivElement | null>(null);
   const templateSelectionRef = useRef<Range | null>(null);
@@ -1172,7 +1290,10 @@ export default function Home() {
     input: HTMLInputElement | null,
     fileHandle: LocalPdfFileHandle | null,
     deleteOriginalAfterScan: boolean,
+    importKind: "intake" | "cpap" = "intake",
   ) {
+    const isPapImport = importKind === "cpap";
+    const updateImportStatus = isPapImport ? setPapPdfStatus : setPdfStatus;
     const clearInput = () => {
       if (input) input.value = "";
     };
@@ -1193,8 +1314,11 @@ export default function Home() {
     }
 
     setIsScanningPdf(true);
-    setPdfMeasurements(null);
-    setPdfStatus("Reading PDF locally...");
+    updateImportStatus(
+      isPapImport
+        ? "Reading PAP compliance PDF locally..."
+        : "Reading PDF locally...",
+    );
 
     let pdfBytes: Uint8Array | null = null;
     let loadingTask: PDFDocumentLoadingTask | null = null;
@@ -1235,21 +1359,33 @@ export default function Home() {
         page.cleanup();
       }
 
-      const measurements = extractPdfMeasurements(pageText.join(" "));
+      const extractedText = pageText.join(" ");
+      const measurements: PdfMeasurements = isPapImport
+        ? { cpap: extractCpapSummary(extractedText) }
+        : extractPdfMeasurements(extractedText);
       pageText.fill("");
       const foundFields = Object.entries(measurements).filter(
         ([, value]) => Boolean(value),
       );
 
       if (foundFields.length === 0) {
-        setPdfStatus(
-          "No supported fields were found. Image-only PDFs will need OCR.",
+        updateImportStatus(
+          isPapImport
+            ? "No PAP compliance data was found. Image-only reports will need OCR."
+            : "No supported fields were found. Image-only PDFs will need OCR.",
         );
-        setToast("No supported fields found in this PDF");
+        setToast(
+          isPapImport
+            ? "No PAP compliance data found in this PDF"
+            : "No supported fields found in this PDF",
+        );
         return;
       }
 
-      setPdfMeasurements(measurements);
+      setPdfMeasurements((current) => ({
+        ...(current || {}),
+        ...measurements,
+      }));
       const measurementLines = [
         measurements.name ? `Name: ${measurements.name}` : null,
         measurements.age ? `Age: ${measurements.age}` : null,
@@ -1260,26 +1396,40 @@ export default function Home() {
       ].filter((line): line is string => Boolean(line));
       const populatedTemplateFields =
         populateMeasurementTokensInNote(measurements);
-      if (!populatedTemplateFields && measurementLines.length > 0) {
+      if (
+        !isPapImport &&
+        !populatedTemplateFields &&
+        measurementLines.length > 0
+      ) {
         const hasExistingNote = Boolean(noteRef.current?.innerText.trim());
         insertEditorText(
           `${hasExistingNote ? "\n\n" : ""}MEASUREMENTS FROM PDF\n${measurementLines.join("\n")}`,
         );
       }
-      successfulStatus = `${foundFields.length} PDF field${
-        foundFields.length === 1 ? "" : "s"
-      } found and ${
-        populatedTemplateFields
-          ? "filled into the note"
-          : measurementLines.length > 0
-            ? "measurements added to the note"
-            : "ready for dot phrases"
-      }`;
+      successfulStatus = isPapImport
+        ? populatedTemplateFields
+          ? "PAP compliance summary filled into .cpap in the note"
+          : "PAP compliance summary ready for .cpap"
+        : `${foundFields.length} PDF field${
+            foundFields.length === 1 ? "" : "s"
+          } found and ${
+            populatedTemplateFields
+              ? "filled into the note"
+              : measurementLines.length > 0
+                ? "measurements added to the note"
+                : "ready for dot phrases"
+          }`;
       scanSucceeded = true;
-      setPdfStatus(successfulStatus);
-      setToast("PDF fields are ready");
+      updateImportStatus(successfulStatus);
+      setToast(
+        isPapImport ? "PAP compliance summary is ready" : "PDF fields are ready",
+      );
     } catch {
-      setPdfStatus("This PDF could not be read. The file was not retained.");
+      updateImportStatus(
+        isPapImport
+          ? "This PAP report could not be read. The file was not retained."
+          : "This PDF could not be read. The file was not retained.",
+      );
       setToast("Unable to read this PDF");
     } finally {
       const documentToClean = pdfDocument;
@@ -1334,16 +1484,22 @@ export default function Home() {
         }
 
         if (originalDeleted) {
-          setPdfStatus(
+          updateImportStatus(
             `${successfulStatus}. Original PDF permanently deleted.`,
           );
-          setToast("PDF fields are ready; original PDF deleted");
+          setToast(
+            isPapImport
+              ? "PAP summary is ready; original PDF deleted"
+              : "PDF fields are ready; original PDF deleted",
+          );
         } else {
-          setPdfStatus(
+          updateImportStatus(
             `${successfulStatus}. Original PDF could not be deleted.`,
           );
           setToast(
-            "Fields imported, but the original PDF could not be deleted",
+            isPapImport
+              ? "PAP summary is ready, but the original PDF could not be deleted"
+              : "Fields imported, but the original PDF could not be deleted",
           );
         }
       }
@@ -1352,10 +1508,15 @@ export default function Home() {
     }
   }
 
-  async function choosePdf() {
+  async function choosePdf(importKind: "intake" | "cpap" = "intake") {
+    const deleteAfterScan = deletePdfAfterScan;
     const picker = (window as PdfPickerWindow).showOpenFilePicker;
     if (!picker) {
-      pdfInputRef.current?.click();
+      if (importKind === "cpap") {
+        papPdfInputRef.current?.click();
+      } else {
+        pdfInputRef.current?.click();
+      }
       return;
     }
 
@@ -1372,7 +1533,7 @@ export default function Home() {
       if (!fileHandle) return;
 
       let removableFileHandle: LocalPdfFileHandle | null = null;
-      if (deletePdfAfterScan) {
+      if (deleteAfterScan) {
         if (typeof fileHandle.remove === "function") {
           if (typeof fileHandle.requestPermission === "function") {
             const permission = await fileHandle.requestPermission({
@@ -1392,11 +1553,16 @@ export default function Home() {
         file,
         null,
         removableFileHandle,
-        deletePdfAfterScan,
+        deleteAfterScan,
+        importKind,
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setToast("The PDF picker could not be opened");
+      setToast(
+        importKind === "cpap"
+          ? "The PAP PDF picker could not be opened"
+          : "The PDF picker could not be opened",
+      );
     }
   }
 
@@ -1405,6 +1571,13 @@ export default function Home() {
     const file = input.files?.[0];
     if (!file) return;
     await processPdfFile(file, input, null, deletePdfAfterScan);
+  }
+
+  async function handlePapPdfUpload(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    await processPdfFile(file, input, null, deletePdfAfterScan, "cpap");
   }
 
   const refreshMicrophones = useCallback(async () => {
@@ -1808,7 +1981,7 @@ export default function Home() {
           "Medical clinical dictation. Preserve medication names, diagnoses, procedures, anatomy, abbreviations, dosages, and measurements.",
           "Do not add automatic commas. Use one comma only when the speaker explicitly dictates comma.",
           "Use preferred vocabulary only when it is actually spoken. Do not repeat words or phrases unless the speaker clearly repeats them.",
-          "Never add sign-offs or subtitle credits such as thank you, thanks for watching, or subtitles by the Amara.org community.",
+          "Never add sign-offs or transcription credits such as thank you, thanks for watching, subtitles by the Amara.org community, captions by GetTranscribed.com, transcription by CastingWords, transcription by ESO Translation, or transcription by ESO Translation by —.",
           specialtyTerms.length
             ? `Preferred specialty vocabulary: ${specialtyTerms.join(", ")}.`
             : "",
@@ -2509,6 +2682,19 @@ export default function Home() {
     window.requestAnimationFrame(() => noteRef.current?.focus());
   }
 
+  function saveQuicktexts(nextQuicktexts: Quicktext[]) {
+    setQuicktexts(nextQuicktexts);
+    window.localStorage.setItem(
+      storageKeys.quicktexts,
+      JSON.stringify(nextQuicktexts),
+    );
+  }
+
+  function openQuicktextForm(item: Quicktext | null = null) {
+    setEditingQuicktext(item);
+    setShowQuicktextForm(true);
+  }
+
   function addQuicktext(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -2518,20 +2704,45 @@ export default function Home() {
     const title = String(data.get("title") || "").trim();
     const content = String(data.get("content") || "").trim();
     if (!shortcut || !title || !content) return;
-    const next = [
-      ...quicktexts,
-      {
-        id: `${Date.now()}`,
-        shortcut: shortcut.startsWith(".") ? shortcut : `.${shortcut}`,
-        title,
-        content,
-        category: "Custom",
-      },
-    ];
-    setQuicktexts(next);
-    window.localStorage.setItem(storageKeys.quicktexts, JSON.stringify(next));
+    const normalizedShortcut = shortcut.startsWith(".")
+      ? shortcut
+      : `.${shortcut}`;
+    if (editingQuicktext) {
+      saveQuicktexts(
+        quicktexts.map((item) =>
+          item.id === editingQuicktext.id
+            ? {
+                ...item,
+                shortcut: normalizedShortcut,
+                title,
+                content,
+              }
+            : item,
+        ),
+      );
+    } else {
+      saveQuicktexts([
+        ...quicktexts,
+        {
+          id: `${Date.now()}`,
+          shortcut: normalizedShortcut,
+          title,
+          content,
+          category: "Custom",
+        },
+      ]);
+    }
     setShowQuicktextForm(false);
-    setToast("Quicktext saved");
+    setEditingQuicktext(null);
+    setToast(editingQuicktext ? "Quicktext updated" : "Quicktext saved");
+  }
+
+  function deleteQuicktext(item: Quicktext) {
+    if (!window.confirm(`Delete the "${item.title}" quicktext?`)) return;
+    saveQuicktexts(quicktexts.filter((entry) => entry.id !== item.id));
+    setShowQuicktextForm(false);
+    setEditingQuicktext(null);
+    setToast("Quicktext deleted");
   }
 
   function saveVocabulary(nextVocabulary: VocabularyItem[]) {
@@ -2850,6 +3061,7 @@ export default function Home() {
     setElapsed(0);
     setPdfMeasurements(null);
     setPdfStatus("Choose a PDF to extract intake and sleep fields");
+    setPapPdfStatus("Choose a PAP compliance PDF to prepare .cpap");
     setLastRecognizedPhrase("");
     setLearningHeard("");
     legacyPatientDataStorageKeys.forEach((key) =>
@@ -3010,7 +3222,7 @@ export default function Home() {
               }
               onClick={() =>
                 activePanel === "quicktext"
-                  ? setShowQuicktextForm(true)
+                  ? openQuicktextForm()
                   : activePanel === "templates"
                     ? openTemplateForm()
                     : openVocabularyForm()
@@ -3063,19 +3275,28 @@ export default function Home() {
                   <span>Type shortcut + space</span>
                 </div>
                 {filteredQuicktexts.map((item) => (
-                  <button
-                    className="library-item"
-                    type="button"
-                    key={item.id}
-                    onClick={() => expandQuicktext(item)}
-                  >
-                    <span className="item-topline">
-                      <code>{item.shortcut}</code>
-                      <span className="category">{item.category}</span>
-                    </span>
-                    <strong>{item.title}</strong>
-                    <span className="snippet-preview">{item.content}</span>
-                  </button>
+                  <div className="quicktext-library-card" key={item.id}>
+                    <button
+                      className="library-item quicktext-item"
+                      type="button"
+                      onClick={() => expandQuicktext(item)}
+                    >
+                      <span className="item-topline">
+                        <code>{item.shortcut}</code>
+                        <span className="category">{item.category}</span>
+                      </span>
+                      <strong>{item.title}</strong>
+                      <span className="snippet-preview">{item.content}</span>
+                    </button>
+                    <button
+                      className="quicktext-edit-button"
+                      type="button"
+                      onClick={() => openQuicktextForm(item)}
+                      aria-label={`Edit ${item.title}`}
+                    >
+                      Edit
+                    </button>
+                  </div>
                 ))}
               </>
             ) : activePanel === "templates" ? (
@@ -3260,113 +3481,60 @@ export default function Home() {
             <span className="format-help">Select text, then choose a style</span>
           </div>
 
-          <section className="pdf-import-panel" aria-label="PDF measurement import">
-            <div className="pdf-import-copy">
-              <span className="pdf-icon" aria-hidden="true">
-                PDF
-              </span>
-              <div>
-                <strong>Import intake fields</strong>
-                <span>{pdfStatus}</span>
-              </div>
-            </div>
-            {pdfMeasurements && (
-              <>
-                <div className="pdf-measurements" aria-label="Extracted measurements">
-                  <span>
-                    Name <strong>{pdfMeasurements.name || "Not found"}</strong>
-                  </span>
-                  <span>
-                    Age <strong>{pdfMeasurements.age || "Not found"}</strong>
-                  </span>
-                  <span>
-                    Gender <strong>{pdfMeasurements.gender || "Not found"}</strong>
-                  </span>
-                  <span>
-                    Height <strong>{pdfMeasurements.height || "Not found"}</strong>
-                  </span>
-                  <span>
-                    Weight <strong>{pdfMeasurements.weight || "Not found"}</strong>
-                  </span>
-                  <span>
-                    BMI <strong>{pdfMeasurements.bmi || "Not found"}</strong>
-                  </span>
-                </div>
-                <div className="pdf-extracted-sections" aria-label="Extracted PDF sections">
-                  <span>
-                    Sleep questionnaire
-                    <strong>
-                      {pdfMeasurements.sleepQuestionnaire ? "Found" : "Not found"}
-                    </strong>
-                  </span>
-                  <span>
-                    Medications
-                    <strong>{pdfMeasurements.meds ? "Found" : "Not found"}</strong>
-                  </span>
-                  <span>
-                    Medication allergies
-                    <strong>
-                      {pdfMeasurements.allergies ? "Found" : "Not found"}
-                    </strong>
-                  </span>
-                  <span>
-                    ESS section
-                    <strong>{pdfMeasurements.ess ? "Found" : "Not found"}</strong>
-                  </span>
-                  <span>
-                    Family history
-                    <strong>
-                      {pdfMeasurements.familyHistory ? "Found" : "Not found"}
-                    </strong>
-                  </span>
-                  <span>
-                    Social history
-                    <strong>
-                      {pdfMeasurements.socialHistory ? "Found" : "Not found"}
-                    </strong>
-                  </span>
-                </div>
-              </>
-            )}
-            <div className="pdf-upload-controls">
-              <button
-                className={`pdf-upload-button ${isScanningPdf ? "disabled" : ""}`}
-                type="button"
-                onClick={() => void choosePdf()}
-                disabled={isScanningPdf}
-              >
-                {isScanningPdf ? "Scanning..." : "Choose PDF"}
-              </button>
+          <div className="pdf-import-row" aria-label="PDF imports">
+            <span className="pdf-import-label">Import</span>
+            <button
+              className={`pdf-import-button ${isScanningPdf ? "disabled" : ""}`}
+              type="button"
+              onClick={() => void choosePdf()}
+              disabled={isScanningPdf}
+            >
+              <span aria-hidden="true">PDF</span>
+              {isScanningPdf ? "Scanning..." : "Intake PDF"}
+            </button>
+            <input
+              ref={pdfInputRef}
+              className="pdf-fallback-input"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={handlePdfUpload}
+              disabled={isScanningPdf}
+            />
+            <button
+              className={`pdf-import-button ${isScanningPdf ? "disabled" : ""}`}
+              type="button"
+              onClick={() => void choosePdf("cpap")}
+              disabled={isScanningPdf}
+            >
+              <span aria-hidden="true">PAP</span>
+              {isScanningPdf ? "Scanning..." : "PAP PDF"}
+            </button>
+            <input
+              ref={papPdfInputRef}
+              className="pdf-fallback-input"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={handlePapPdfUpload}
+              disabled={isScanningPdf}
+            />
+            <label
+              className="pdf-delete-option"
+              title="Permanently delete the selected original PDF only after a successful import"
+            >
               <input
-                ref={pdfInputRef}
-                className="pdf-fallback-input"
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={handlePdfUpload}
+                type="checkbox"
+                checked={deletePdfAfterScan}
+                onChange={(event) =>
+                  setDeletePdfAfterScan(event.target.checked)
+                }
                 disabled={isScanningPdf}
               />
-              <label
-                className="pdf-delete-option"
-                title="Permanently delete the selected original PDF only after a successful scan"
-              >
-                <input
-                  type="checkbox"
-                  checked={deletePdfAfterScan}
-                  onChange={(event) =>
-                    setDeletePdfAfterScan(event.target.checked)
-                  }
-                  disabled={isScanningPdf}
-                />
-                Delete original after successful scan
-              </label>
-            </div>
-            <span className="pdf-local-note">
-              Read in memory, then immediately released. Template fields:{" "}
-              {pdfFieldTokens.map((field) => (
-                <code key={field}>{field}</code>
-              ))}
+              Delete after import
+            </label>
+            <span className="pdf-import-live" role="status" aria-live="polite">
+              {pdfStatus}. {papPdfStatus}.
             </span>
-          </section>
+          </div>
 
           <div className="editor-wrap">
             {!note && !interimText && (
@@ -3588,16 +3756,25 @@ export default function Home() {
 
       {showQuicktextForm && (
         <div className="modal-backdrop" role="presentation">
-          <form className="modal-card" onSubmit={addQuicktext}>
+          <form
+            className="modal-card"
+            onSubmit={addQuicktext}
+            key={editingQuicktext?.id ?? "new-quicktext"}
+          >
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">Personal library</p>
-                <h2>Create quicktext</h2>
+                <h2>
+                  {editingQuicktext ? "Edit quicktext" : "Create quicktext"}
+                </h2>
               </div>
               <button
                 type="button"
                 className="close-button"
-                onClick={() => setShowQuicktextForm(false)}
+                onClick={() => {
+                  setShowQuicktextForm(false);
+                  setEditingQuicktext(null);
+                }}
                 aria-label="Close"
               >
                 ×
@@ -3610,6 +3787,7 @@ export default function Home() {
                 <input
                   name="shortcut"
                   placeholder="myphrase"
+                  defaultValue={editingQuicktext?.shortcut.replace(/^\./, "")}
                   required
                   autoFocus
                   pattern="[.]?[A-Za-z0-9_-]+"
@@ -3618,27 +3796,51 @@ export default function Home() {
             </label>
             <label>
               Name
-              <input name="title" placeholder="Phrase name" required />
+              <input
+                name="title"
+                placeholder="Phrase name"
+                defaultValue={editingQuicktext?.title ?? ""}
+                required
+              />
             </label>
             <label>
               Expanded text
               <textarea
                 name="content"
                 placeholder="Enter the full text that should be inserted…"
+                defaultValue={editingQuicktext?.content ?? ""}
                 required
               />
             </label>
-            <div className="modal-actions">
-              <button
-                className="button subtle"
-                type="button"
-                onClick={() => setShowQuicktextForm(false)}
-              >
-                Cancel
-              </button>
-              <button className="button primary" type="submit">
-                Save quicktext
-              </button>
+            <div
+              className={`modal-actions ${
+                editingQuicktext ? "template-manager-actions" : ""
+              }`}
+            >
+              {editingQuicktext && (
+                <button
+                  className="button danger"
+                  type="button"
+                  onClick={() => deleteQuicktext(editingQuicktext)}
+                >
+                  Delete
+                </button>
+              )}
+              <div className="template-save-actions">
+                <button
+                  className="button subtle"
+                  type="button"
+                  onClick={() => {
+                    setShowQuicktextForm(false);
+                    setEditingQuicktext(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button className="button primary" type="submit">
+                  {editingQuicktext ? "Save changes" : "Save quicktext"}
+                </button>
+              </div>
             </div>
           </form>
         </div>

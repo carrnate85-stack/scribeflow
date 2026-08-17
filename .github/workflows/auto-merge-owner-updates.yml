@@ -1,0 +1,107 @@
+name: Validate and merge owner updates
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: owner-update-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-merge:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      startsWith(github.head_ref, 'agent/')
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out proposed update
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify app changes include a newer version
+        shell: pwsh
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          $changedFiles = @(
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD"
+          )
+          $releaseFiles = @(
+            $changedFiles | Where-Object {
+              $_ -match "^(app|assets|installer|scripts)/" -or
+              $_ -in @("package.json", "Launch ScribeFlow.cmd")
+            }
+          )
+          if ($releaseFiles.Count -eq 0) {
+            exit 0
+          }
+
+          $basePackageText = git show "origin/${{ github.base_ref }}:package.json"
+          $baseVersion = [version](
+            ($basePackageText -join "`n" | ConvertFrom-Json).version
+          )
+          $headVersion = [version](
+            (Get-Content -LiteralPath "package.json" -Raw |
+              ConvertFrom-Json).version
+          )
+          if ($headVersion -le $baseVersion) {
+            throw "App changes require package.json to be bumped above $baseVersion."
+          }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test
+        run: pnpm test
+
+      - name: Mark ready and merge verified owner update
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          function Invoke-GitHubWithRetry {
+            param([string[]]$Arguments)
+
+            for ($attempt = 1; $attempt -le 5; $attempt += 1) {
+              & gh @Arguments
+              if ($LASTEXITCODE -eq 0) {
+                return
+              }
+              if ($attempt -eq 5) {
+                throw "GitHub did not accept: gh $($Arguments -join ' ')"
+              }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+
+          if ("${{ github.event.pull_request.draft }}" -eq "true") {
+            Invoke-GitHubWithRetry -Arguments @("pr", "ready", $env:PR_URL)
+          }
+          Invoke-GitHubWithRetry -Arguments @(
+            "pr", "merge", $env:PR_URL, "--squash", "--delete-branch"
+          )

@@ -5,6 +5,15 @@ bundled Whisper speech recognition with an editable note, reusable dot phrases,
 structured clinical templates, in-memory PDF parsing, and copy or OneDrive
 document saving.
 
+PDF templates can use `.pastmedicalhistory` to insert the Past Medical History
+section extracted from an onboarding form.
+
+PAP compliance reports have a separate local upload control. The `.cpap` field
+inserts a concise summary of usage, machine settings, 95th-percentile pressure
+when present, 95th-percentile leak, and residual AHI. The original PAP PDF is
+permanently deleted after a successful scan using filename, size, and SHA-256
+verification.
+
 ## Included workflows
 
 - Start and stop dictation with the microphone control or the backquote key
@@ -77,10 +86,14 @@ and its SHA-256 file, verifies the package, applies the update, and then opens
 ScribeFlow. If GitHub is unavailable, the update is skipped and the installed
 version opens normally.
 
-The `Build Windows installer` GitHub Actions workflow builds and tests the app
-and creates the same ZIP. Running it manually produces a downloadable workflow
-artifact. Pushing a tag such as `v0.1.0` also publishes the ZIP on the
-repository's **Releases** page together with its SHA-256 file.
+Owner-created `agent/*` pull requests are built and tested automatically. A
+verified update is marked ready and squash-merged without requiring a manual
+button click. App changes must increase the version in `package.json`.
+
+Every merged app version on `main` automatically receives its matching Git tag,
+verified Windows installer, SHA-256 file, and GitHub Release. This is the
+Release checked by installed desktop shortcuts, so a pushed update cannot remain
+stranded in an unpublished draft pull request.
 
 Native Whisper remains a separate local component even though its controls are
 built into ScribeFlow. This keeps large model files out of GitHub and out of app
