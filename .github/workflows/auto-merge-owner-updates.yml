@@ -84,7 +84,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          if ("${{ github.event.pull_request.draft }}" -eq "true") {
-            gh pr ready $env:PR_URL
+          function Invoke-GitHubWithRetry {
+            param([string[]]$Arguments)
+
+            for ($attempt = 1; $attempt -le 5; $attempt += 1) {
+              & gh @Arguments
+              if ($LASTEXITCODE -eq 0) {
+                return
+              }
+              if ($attempt -eq 5) {
+                throw "GitHub did not accept: gh $($Arguments -join ' ')"
+              }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
           }
-          gh pr merge $env:PR_URL --squash --delete-branch
+
+          if ("${{ github.event.pull_request.draft }}" -eq "true") {
+            Invoke-GitHubWithRetry -Arguments @("pr", "ready", $env:PR_URL)
+          }
+          Invoke-GitHubWithRetry -Arguments @(
+            "pr", "merge", $env:PR_URL, "--squash", "--delete-branch"
+          )
