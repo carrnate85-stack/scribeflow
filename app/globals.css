@@ -408,6 +408,18 @@ kbd {
   font-weight: 600;
 }
 
+.shared-library-location {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  padding: 0 0.1rem;
+}
+
+.shared-library-location code {
+  color: var(--ink-soft);
+  font-size: inherit;
+}
+
 .library-item {
   width: 100%;
   display: flex;
