@@ -42,6 +42,13 @@ type VocabularyItem = {
   replacement: string;
 };
 
+type WritingToolsVaultPayload = {
+  version: 1;
+  updatedAt: number;
+  quicktexts: Quicktext[];
+  vocabulary: VocabularyItem[];
+};
+
 type DictationEngine = "whisper" | "chrome";
 
 type WhisperInstallStatus = {
@@ -364,6 +371,7 @@ const storageKeys = {
   templatesBackup: "scribe-templates-backup-v1",
   templatesUpdatedAt: "scribe-templates-updated-v1",
   vocabulary: "scribe-vocabulary-v1",
+  writingToolsUpdatedAt: "scribe-writing-tools-updated-v1",
   speechPackReady: "scribe-speech-pack-ready-v1",
   dictationEngine: "scribe-dictation-engine-v1",
   microphoneId: "scribe-microphone-id-v1",
@@ -428,6 +436,116 @@ function parseTemplateVaultPayload(
   } catch {
     return null;
   }
+}
+
+function parseStoredQuicktexts(value: string | null): Quicktext[] | null {
+  if (value === null) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every((item) => {
+        if (!item || typeof item !== "object") return false;
+        const candidate = item as Partial<Quicktext>;
+        return (
+          typeof candidate.id === "string" &&
+          typeof candidate.shortcut === "string" &&
+          typeof candidate.title === "string" &&
+          typeof candidate.content === "string" &&
+          typeof candidate.category === "string"
+        );
+      })
+    ) {
+      return null;
+    }
+    return parsed as Quicktext[];
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredVocabulary(value: string | null): VocabularyItem[] | null {
+  if (value === null) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every((item) => {
+        if (!item || typeof item !== "object") return false;
+        const candidate = item as Partial<VocabularyItem>;
+        return (
+          typeof candidate.id === "string" &&
+          typeof candidate.heard === "string" &&
+          typeof candidate.replacement === "string"
+        );
+      })
+    ) {
+      return null;
+    }
+    return parsed as VocabularyItem[];
+  } catch {
+    return null;
+  }
+}
+
+function parseWritingToolsVaultPayload(
+  value: string | null,
+): WritingToolsVaultPayload | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<WritingToolsVaultPayload>;
+    const quicktexts = Array.isArray(parsed.quicktexts)
+      ? parseStoredQuicktexts(JSON.stringify(parsed.quicktexts))
+      : null;
+    const vocabulary = Array.isArray(parsed.vocabulary)
+      ? parseStoredVocabulary(JSON.stringify(parsed.vocabulary))
+      : null;
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.updatedAt !== "number" ||
+      !Number.isFinite(parsed.updatedAt) ||
+      !quicktexts ||
+      !vocabulary
+    ) {
+      return null;
+    }
+    return {
+      version: 1,
+      updatedAt: parsed.updatedAt,
+      quicktexts,
+      vocabulary,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mergeWritingToolsForMigration(
+  diskPayload: WritingToolsVaultPayload,
+  browserPayload: WritingToolsVaultPayload,
+): WritingToolsVaultPayload {
+  const quicktexts = new Map<string, Quicktext>();
+  diskPayload.quicktexts.forEach((item) =>
+    quicktexts.set(item.shortcut.trim().toLowerCase(), item),
+  );
+  browserPayload.quicktexts.forEach((item) =>
+    quicktexts.set(item.shortcut.trim().toLowerCase(), item),
+  );
+
+  const vocabulary = new Map<string, VocabularyItem>();
+  diskPayload.vocabulary.forEach((item) =>
+    vocabulary.set(item.heard.trim().toLowerCase(), item),
+  );
+  browserPayload.vocabulary.forEach((item) =>
+    vocabulary.set(item.heard.trim().toLowerCase(), item),
+  );
+
+  return {
+    version: 1,
+    updatedAt: Math.max(Date.now(), diskPayload.updatedAt + 1),
+    quicktexts: Array.from(quicktexts.values()),
+    vocabulary: Array.from(vocabulary.values()),
+  };
 }
 
 function plainTextToHtml(text: string) {
@@ -992,6 +1110,9 @@ export default function Home() {
   const [templateStorageStatus, setTemplateStorageStatus] =
     useState("Loading protected copy");
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
+  const [writingToolsReady, setWritingToolsReady] = useState(false);
+  const [writingToolsStorageStatus, setWritingToolsStorageStatus] =
+    useState("Loading shared copy");
   const [pdfMeasurements, setPdfMeasurements] =
     useState<PdfMeasurements | null>(null);
   const [pdfStatus, setPdfStatus] = useState(
@@ -1040,6 +1161,8 @@ export default function Home() {
     underline: false,
   });
   const recognitionRef = useRef<Recognition | null>(null);
+  const templatesUpdatedAtRef = useRef(0);
+  const writingToolsUpdatedAtRef = useRef(0);
   const whisperLoadPromiseRef = useRef<Promise<void> | null>(null);
   const whisperResultHandlerRef = useRef<
     (text: string, session: number) => void
@@ -1625,6 +1748,23 @@ export default function Home() {
     [],
   );
 
+  const persistWritingToolsToDisk = useCallback(
+    async (payload: WritingToolsVaultPayload) => {
+      const response = await fetch(
+        "http://127.0.0.1:3001/config/writing-tools",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!response.ok) {
+        throw new Error("The shared writing-tools copy could not be updated");
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     legacyPatientDataStorageKeys.forEach((key) =>
       window.localStorage.removeItem(key),
@@ -1638,19 +1778,15 @@ export default function Home() {
       window.localStorage.getItem(storageKeys.templatesUpdatedAt) || 0,
     );
     const storedVocabulary = window.localStorage.getItem(storageKeys.vocabulary);
+    const storedWritingToolsUpdatedAt = Number(
+      window.localStorage.getItem(storageKeys.writingToolsUpdatedAt) || 0,
+    );
     const storedDictationEngine = window.localStorage.getItem(
       storageKeys.dictationEngine,
     );
     const storedMicrophoneId = window.localStorage.getItem(
       storageKeys.microphoneId,
     );
-    if (storedQuicktexts) {
-      try {
-        setQuicktexts(JSON.parse(storedQuicktexts) as Quicktext[]);
-      } catch {
-        setQuicktexts(starterQuicktexts);
-      }
-    }
     const browserTemplates =
       parseStoredTemplates(storedTemplates) ||
       parseStoredTemplates(storedTemplateBackup);
@@ -1692,6 +1828,7 @@ export default function Home() {
 
       setTemplates(selectedPayload.templates);
       setTemplatesReady(true);
+      templatesUpdatedAtRef.current = selectedPayload.updatedAt;
       const serializedTemplates = JSON.stringify(selectedPayload.templates);
       window.localStorage.setItem(storageKeys.templates, serializedTemplates);
       window.localStorage.setItem(
@@ -1708,28 +1845,103 @@ export default function Home() {
         diskPayload.updatedAt === selectedPayload.updatedAt &&
         JSON.stringify(diskPayload.templates) === serializedTemplates;
       if (diskMatches) {
-        setTemplateStorageStatus("Synced in Documents");
+        setTemplateStorageStatus("Synced in OneDrive");
       } else {
         try {
           await persistTemplatesToDisk(selectedPayload);
-          setTemplateStorageStatus("Synced in Documents");
+          setTemplateStorageStatus("Synced in OneDrive");
         } catch {
           setTemplateStorageStatus("Browser backup only");
         }
       }
     })();
-    if (storedVocabulary) {
+    const browserQuicktexts = parseStoredQuicktexts(storedQuicktexts);
+    const browserVocabulary = parseStoredVocabulary(storedVocabulary);
+    void (async () => {
+      let diskPayload: WritingToolsVaultPayload | null = null;
       try {
-        const parsedVocabulary = JSON.parse(
-          storedVocabulary,
-        ) as VocabularyItem[];
-        setVocabulary(
-          Array.isArray(parsedVocabulary) ? parsedVocabulary : [],
+        const response = await fetch(
+          "http://127.0.0.1:3001/config/writing-tools",
+          { cache: "no-store" },
         );
+        if (response.ok) {
+          diskPayload = parseWritingToolsVaultPayload(await response.text());
+        }
       } catch {
-        setVocabulary([]);
+        diskPayload = null;
       }
-    }
+
+      const hasBrowserWritingTools =
+        browserQuicktexts !== null || browserVocabulary !== null;
+      const browserPayload: WritingToolsVaultPayload | null =
+        hasBrowserWritingTools
+          ? {
+              version: 1,
+              updatedAt:
+                storedWritingToolsUpdatedAt > 0
+                  ? storedWritingToolsUpdatedAt
+                  : 0,
+              quicktexts: browserQuicktexts ?? starterQuicktexts,
+              vocabulary: browserVocabulary ?? [],
+            }
+          : null;
+
+      let selectedPayload: WritingToolsVaultPayload;
+      if (diskPayload && browserPayload) {
+        selectedPayload =
+          browserPayload.updatedAt === 0
+            ? mergeWritingToolsForMigration(diskPayload, browserPayload)
+            : diskPayload.updatedAt >= browserPayload.updatedAt
+              ? diskPayload
+              : browserPayload;
+      } else {
+        selectedPayload =
+          diskPayload ||
+          (browserPayload
+            ? {
+                ...browserPayload,
+                updatedAt:
+                  browserPayload.updatedAt > 0
+                    ? browserPayload.updatedAt
+                    : Date.now(),
+              }
+            : {
+                version: 1,
+                updatedAt: Date.now(),
+                quicktexts: starterQuicktexts,
+                vocabulary: [],
+              });
+      }
+
+      setQuicktexts(selectedPayload.quicktexts);
+      setVocabulary(selectedPayload.vocabulary);
+      setWritingToolsReady(true);
+      writingToolsUpdatedAtRef.current = selectedPayload.updatedAt;
+      const serializedQuicktexts = JSON.stringify(selectedPayload.quicktexts);
+      const serializedVocabulary = JSON.stringify(selectedPayload.vocabulary);
+      window.localStorage.setItem(storageKeys.quicktexts, serializedQuicktexts);
+      window.localStorage.setItem(storageKeys.vocabulary, serializedVocabulary);
+      window.localStorage.setItem(
+        storageKeys.writingToolsUpdatedAt,
+        String(selectedPayload.updatedAt),
+      );
+
+      const diskMatches =
+        diskPayload &&
+        diskPayload.updatedAt === selectedPayload.updatedAt &&
+        JSON.stringify(diskPayload.quicktexts) === serializedQuicktexts &&
+        JSON.stringify(diskPayload.vocabulary) === serializedVocabulary;
+      if (diskMatches) {
+        setWritingToolsStorageStatus("Synced in OneDrive");
+      } else {
+        try {
+          await persistWritingToolsToDisk(selectedPayload);
+          setWritingToolsStorageStatus("Synced in OneDrive");
+        } catch {
+          setWritingToolsStorageStatus("Browser backup only");
+        }
+      }
+    })();
     setSpeechSupported(
       Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
     );
@@ -1746,7 +1958,94 @@ export default function Home() {
       setSelectedMicrophoneId(storedMicrophoneId);
     }
     void refreshMicrophones();
-  }, [persistTemplatesToDisk, refreshMicrophones]);
+  }, [persistTemplatesToDisk, persistWritingToolsToDisk, refreshMicrophones]);
+
+  useEffect(() => {
+    if (!templatesReady || !writingToolsReady) return;
+
+    let cancelled = false;
+    const refreshSharedLibrary = async () => {
+      try {
+        const [templateResponse, writingToolsResponse] = await Promise.all([
+          fetch("http://127.0.0.1:3001/config/templates", {
+            cache: "no-store",
+          }),
+          fetch("http://127.0.0.1:3001/config/writing-tools", {
+            cache: "no-store",
+          }),
+        ]);
+        if (cancelled) return;
+
+        if (templateResponse.ok) {
+          const payload = parseTemplateVaultPayload(
+            await templateResponse.text(),
+          );
+          if (payload && payload.updatedAt > templatesUpdatedAtRef.current) {
+            const serialized = JSON.stringify(payload.templates);
+            templatesUpdatedAtRef.current = payload.updatedAt;
+            setTemplates(payload.templates);
+            window.localStorage.setItem(storageKeys.templates, serialized);
+            window.localStorage.setItem(
+              storageKeys.templatesBackup,
+              serialized,
+            );
+            window.localStorage.setItem(
+              storageKeys.templatesUpdatedAt,
+              String(payload.updatedAt),
+            );
+            setTemplateStorageStatus("Updated from OneDrive");
+          }
+        }
+
+        if (writingToolsResponse.ok) {
+          const payload = parseWritingToolsVaultPayload(
+            await writingToolsResponse.text(),
+          );
+          if (
+            payload &&
+            payload.updatedAt > writingToolsUpdatedAtRef.current
+          ) {
+            writingToolsUpdatedAtRef.current = payload.updatedAt;
+            setQuicktexts(payload.quicktexts);
+            setVocabulary(payload.vocabulary);
+            window.localStorage.setItem(
+              storageKeys.quicktexts,
+              JSON.stringify(payload.quicktexts),
+            );
+            window.localStorage.setItem(
+              storageKeys.vocabulary,
+              JSON.stringify(payload.vocabulary),
+            );
+            window.localStorage.setItem(
+              storageKeys.writingToolsUpdatedAt,
+              String(payload.updatedAt),
+            );
+            setWritingToolsStorageStatus("Updated from OneDrive");
+          }
+        }
+      } catch {
+        // Keep the browser backup active while the local helper is restarting.
+      }
+    };
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSharedLibrary();
+      }
+    };
+    const timer = window.setInterval(() => {
+      void refreshSharedLibrary();
+    }, 5000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [templatesReady, writingToolsReady]);
 
   useEffect(() => {
     const mediaDevices = navigator.mediaDevices;
@@ -2682,12 +2981,46 @@ export default function Home() {
     window.requestAnimationFrame(() => noteRef.current?.focus());
   }
 
-  function saveQuicktexts(nextQuicktexts: Quicktext[]) {
+  function saveWritingTools(
+    nextQuicktexts: Quicktext[],
+    nextVocabulary: VocabularyItem[],
+  ) {
+    const updatedAt = Date.now();
+    const payload: WritingToolsVaultPayload = {
+      version: 1,
+      updatedAt,
+      quicktexts: nextQuicktexts,
+      vocabulary: nextVocabulary,
+    };
+    writingToolsUpdatedAtRef.current = updatedAt;
     setQuicktexts(nextQuicktexts);
+    setVocabulary(nextVocabulary);
+    setWritingToolsReady(true);
     window.localStorage.setItem(
       storageKeys.quicktexts,
       JSON.stringify(nextQuicktexts),
     );
+    window.localStorage.setItem(
+      storageKeys.vocabulary,
+      JSON.stringify(nextVocabulary),
+    );
+    window.localStorage.setItem(
+      storageKeys.writingToolsUpdatedAt,
+      String(updatedAt),
+    );
+    setWritingToolsStorageStatus("Syncing to Documents...");
+    void persistWritingToolsToDisk(payload)
+      .then(() => setWritingToolsStorageStatus("Synced in OneDrive"))
+      .catch(() => {
+        setWritingToolsStorageStatus("Browser backup only");
+        setToast(
+          "Writing tool saved in browser; shared copy needs the launcher",
+        );
+      });
+  }
+
+  function saveQuicktexts(nextQuicktexts: Quicktext[]) {
+    saveWritingTools(nextQuicktexts, vocabulary);
   }
 
   function openQuicktextForm(item: Quicktext | null = null) {
@@ -2746,11 +3079,7 @@ export default function Home() {
   }
 
   function saveVocabulary(nextVocabulary: VocabularyItem[]) {
-    setVocabulary(nextVocabulary);
-    window.localStorage.setItem(
-      storageKeys.vocabulary,
-      JSON.stringify(nextVocabulary),
-    );
+    saveWritingTools(quicktexts, nextVocabulary);
   }
 
   function openVocabularyForm(item: VocabularyItem | null = null) {
@@ -2842,6 +3171,7 @@ export default function Home() {
       updatedAt,
       templates: nextTemplates,
     };
+    templatesUpdatedAtRef.current = updatedAt;
     setTemplates(nextTemplates);
     window.localStorage.setItem(
       storageKeys.templatesBackup,
@@ -2854,7 +3184,7 @@ export default function Home() {
     );
     setTemplateStorageStatus("Protecting templates...");
     void persistTemplatesToDisk(payload)
-      .then(() => setTemplateStorageStatus("Synced in Documents"))
+      .then(() => setTemplateStorageStatus("Synced in OneDrive"))
       .catch(() => {
         setTemplateStorageStatus("Browser backup only");
         setToast("Template saved in browser; durable backup needs the launcher");
@@ -3267,12 +3597,20 @@ export default function Home() {
             <kbd>⌘K</kbd>
           </label>
 
+          <div className="shared-library-location">
+            Shared folder: <code>OneDrive\Documents\ScribeFlow</code>
+          </div>
+
           <div className="library-list">
             {activePanel === "quicktext" ? (
               <>
                 <div className="list-meta">
-                  <span>{filteredQuicktexts.length} snippets</span>
-                  <span>Type shortcut + space</span>
+                  <span>
+                    {writingToolsReady
+                      ? `${filteredQuicktexts.length} snippets`
+                      : "Loading Quicktext"}
+                  </span>
+                  <span>{writingToolsStorageStatus}</span>
                 </div>
                 {filteredQuicktexts.map((item) => (
                   <div className="quicktext-library-card" key={item.id}>
@@ -3348,8 +3686,12 @@ export default function Home() {
             ) : (
               <>
                 <div className="list-meta">
-                  <span>{filteredVocabulary.length} terms</span>
-                  <span>Recognition filter</span>
+                  <span>
+                    {writingToolsReady
+                      ? `${filteredVocabulary.length} terms`
+                      : "Loading vocabulary"}
+                  </span>
+                  <span>{writingToolsStorageStatus}</span>
                 </div>
                 {filteredVocabulary.length === 0 ? (
                   <div className="vocabulary-empty">

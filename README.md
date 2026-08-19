@@ -137,8 +137,16 @@ OneDrive account to another PC. A valid legacy template vault is migrated from
 `%LOCALAPPDATA%\ScribeFlow` once, verified, and then removed from the old local
 location. The browser copy remains an additional fallback, and the newest
 valid copy is restored when the app starts. Quicktexts, vocabulary corrections,
-and the selected dictation engine remain local browser configuration. Do not
-place patient identifiers in reusable configuration items.
+and up to 20 timestamped recovery copies are synced through
+`OneDrive\Documents\ScribeFlow\Writing Tools\writing-tools.json`. Existing
+browser Quicktext and vocabulary entries are merged into this shared copy the
+first time the updated app runs on each PC. ScribeFlow checks the same shared
+root every five seconds and whenever its window regains focus, so changes made
+on another PC appear without restarting. Templates, Quicktext, and vocabulary
+all use the single `OneDrive\Documents\ScribeFlow` root; no second local
+Documents path is used when OneDrive is available. The selected dictation
+engine and microphone remain local to each PC. Do not place patient identifiers
+in reusable configuration items.
 
 Only use OneDrive for protected health information when that account and your
 organization's configuration are approved for that purpose.

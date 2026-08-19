@@ -72,6 +72,9 @@ const notesRoot = resolve(documentsRoot, "Notes");
 const templatesRoot = resolve(documentsRoot, "Templates");
 const templatesFile = resolve(templatesRoot, "templates.json");
 const templateBackupsRoot = resolve(templatesRoot, "Backups");
+const writingToolsRoot = resolve(documentsRoot, "Writing Tools");
+const writingToolsFile = resolve(writingToolsRoot, "writing-tools.json");
+const writingToolsBackupsRoot = resolve(writingToolsRoot, "Backups");
 const legacyTemplatesFile = resolve(dataRoot, "templates.json");
 const legacyTemplateBackupsRoot = resolve(dataRoot, "template-backups");
 const downloadsRoot = resolve(process.env.USERPROFILE || homedir(), "Downloads");
@@ -87,6 +90,7 @@ const port =
     ? configuredPort
     : 3001;
 const maxTemplateBytes = 5 * 1024 * 1024;
+const maxWritingToolsBytes = 2 * 1024 * 1024;
 const maxNoteBytes = 2 * 1024 * 1024;
 const maxPdfDeleteRequestBytes = 8 * 1024;
 const allowedOrigins = new Set([
@@ -469,6 +473,99 @@ function migrateLegacyTemplates() {
   }
 }
 
+function isWritingToolsPayload(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    value.version === 1 &&
+    Number.isFinite(value.updatedAt) &&
+    Array.isArray(value.quicktexts) &&
+    value.quicktexts.every(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        typeof item.shortcut === "string" &&
+        typeof item.title === "string" &&
+        typeof item.content === "string" &&
+        typeof item.category === "string",
+    ) &&
+    Array.isArray(value.vocabulary) &&
+    value.vocabulary.every(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        typeof item.heard === "string" &&
+        typeof item.replacement === "string",
+    )
+  );
+}
+
+function readWritingToolsPayload(path) {
+  if (!existsSync(path)) return null;
+  try {
+    const payload = JSON.parse(readFileSync(path, "utf8"));
+    return isWritingToolsPayload(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function readDurableWritingTools() {
+  const primary = readWritingToolsPayload(writingToolsFile);
+  if (primary) return primary;
+  if (!existsSync(writingToolsBackupsRoot)) return null;
+  const backups = readdirSync(writingToolsBackupsRoot)
+    .filter((file) => /^writing-tools-\d+\.json$/.test(file))
+    .sort()
+    .reverse();
+  for (const backup of backups) {
+    const payload = readWritingToolsPayload(
+      resolve(writingToolsBackupsRoot, backup),
+    );
+    if (payload) return payload;
+  }
+  return null;
+}
+
+function writeDurableWritingTools(payload) {
+  mkdirSync(writingToolsBackupsRoot, { recursive: true });
+  if (existsSync(writingToolsFile)) {
+    const current = readFileSync(writingToolsFile, "utf8");
+    const next = JSON.stringify(payload);
+    if (current !== next) {
+      copyFileSync(
+        writingToolsFile,
+        resolve(
+          writingToolsBackupsRoot,
+          `writing-tools-${Date.now()}.json`,
+        ),
+      );
+    }
+  }
+
+  const temporaryFile = `${writingToolsFile}.new`;
+  writeFileSync(temporaryFile, JSON.stringify(payload), "utf8");
+  renameSync(temporaryFile, writingToolsFile);
+
+  let backups = readdirSync(writingToolsBackupsRoot)
+    .filter((file) => /^writing-tools-\d+\.json$/.test(file))
+    .sort()
+    .reverse();
+  if (backups.length === 0) {
+    const firstBackup = `writing-tools-${Date.now()}.json`;
+    copyFileSync(
+      writingToolsFile,
+      resolve(writingToolsBackupsRoot, firstBackup),
+    );
+    backups = [firstBackup];
+  }
+  backups.slice(20).forEach((backup) => {
+    unlinkSync(resolve(writingToolsBackupsRoot, backup));
+  });
+}
+
 migrateLegacyTemplates();
 
 const server = createServer((request, response) => {
@@ -599,6 +696,55 @@ const server = createServer((request, response) => {
         sendText(response, 500, "The note could not be saved");
       }
     });
+    return;
+  }
+  if (url.pathname === "/config/writing-tools") {
+    if (request.method === "GET" || request.method === "HEAD") {
+      const payload = readDurableWritingTools();
+      if (!payload) {
+        sendText(response, 404, "No shared writing-tools copy yet");
+        return;
+      }
+      const body = JSON.stringify(payload);
+      response.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Length": String(Buffer.byteLength(body)),
+        "Content-Type": "application/json; charset=utf-8",
+      });
+      response.end(request.method === "HEAD" ? undefined : body);
+      return;
+    }
+    if (request.method === "PUT") {
+      const chunks = [];
+      let size = 0;
+      let rejected = false;
+      request.on("data", (chunk) => {
+        if (rejected) return;
+        size += chunk.length;
+        if (size > maxWritingToolsBytes) {
+          rejected = true;
+          sendText(response, 413, "Writing-tools copy is too large");
+          return;
+        }
+        chunks.push(chunk);
+      });
+      request.on("end", () => {
+        if (rejected) return;
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (!isWritingToolsPayload(payload)) {
+            sendText(response, 400, "Invalid writing-tools copy");
+            return;
+          }
+          writeDurableWritingTools(payload);
+          sendText(response, 200, "Writing tools synced in Documents");
+        } catch {
+          sendText(response, 400, "Invalid writing-tools copy");
+        }
+      });
+      return;
+    }
+    sendText(response, 405, "Method not allowed");
     return;
   }
   if (url.pathname === "/config/templates") {

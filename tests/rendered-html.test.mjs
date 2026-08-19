@@ -149,6 +149,14 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.doesNotMatch(page, /getUserMedia\(\{ audio: true \}\)/);
   assert.match(page, /scribe-speech-pack-ready-v1/);
   assert.match(page, /scribe-vocabulary-v1/);
+  assert.match(page, /scribe-writing-tools-updated-v1/);
+  assert.match(page, /WritingToolsVaultPayload/);
+  assert.match(page, /mergeWritingToolsForMigration/);
+  assert.match(page, /\/config\/writing-tools/);
+  assert.match(page, /Syncing to Documents/);
+  assert.match(page, /Updated from OneDrive/);
+  assert.match(page, /refreshSharedLibrary/);
+  assert.match(page, /OneDrive\\Documents\\ScribeFlow/);
   assert.match(page, /applyVocabularyCorrections/);
   assert.match(page, /SpeechRecognitionPhrase/);
   assert.match(page, /DictationEngine = "whisper" \| "chrome"/);
@@ -261,7 +269,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /parseStoredTemplates/);
   assert.match(page, /parseTemplateVaultPayload/);
   assert.match(page, /http:\/\/127\.0\.0\.1:3001\/config\/templates/);
-  assert.match(page, /Synced in Documents/);
+  assert.match(page, /Synced in OneDrive/);
   assert.match(page, /Restoring your templates/);
   assert.match(page, /saveTemplate/);
   assert.match(
@@ -414,6 +422,17 @@ test("includes quicktext, template, and local-save workflows", async () => {
     /url\.pathname === "\/documents\/save-note"/,
   );
   assert.match(localModelServer, /url\.pathname === "\/config\/templates"/);
+  assert.match(
+    localModelServer,
+    /url\.pathname === "\/config\/writing-tools"/,
+  );
+  assert.match(
+    localModelServer,
+    /const writingToolsRoot = resolve\(documentsRoot, "Writing Tools"\)/,
+  );
+  assert.match(localModelServer, /writing-tools\.json/);
+  assert.match(localModelServer, /writeDurableWritingTools/);
+  assert.match(localModelServer, /writing-tools-\$\{Date\.now\(\)\}\.json/);
   assert.match(localModelServer, /if \(backups\.length === 0\)/);
   assert.match(localModelServer, /backups\.slice\(20\)/);
   assert.match(localModelServer, /deleteVerifiedPdf\(downloadsRoot, payload\)/);
