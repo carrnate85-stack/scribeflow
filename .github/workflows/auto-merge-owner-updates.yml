@@ -10,6 +10,7 @@ on:
       - reopened
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -104,4 +105,8 @@ jobs:
           }
           Invoke-GitHubWithRetry -Arguments @(
             "pr", "merge", $env:PR_URL, "--squash", "--delete-branch"
+          )
+          Invoke-GitHubWithRetry -Arguments @(
+            "workflow", "run", "build-windows-installer.yml",
+            "--ref", "${{ github.base_ref }}"
           )
