@@ -283,6 +283,12 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /contentHtml/);
   assert.match(page, /applyTemplateFormatting/);
   assert.match(page, /Template text formatting/);
+  assert.match(page, /editor\.innerHTML\s*=/);
+  const templateEditorMarkup = page.match(
+    /ref=\{templateEditorRef\}[\s\S]*?\/>/,
+  );
+  assert.ok(templateEditorMarkup, "template rich-text editor should be rendered");
+  assert.doesNotMatch(templateEditorMarkup[0], /dangerouslySetInnerHTML/);
   assert.match(page, /\[search, templates\]/);
   assert.match(page, /duplicateTemplate/);
   assert.match(page, /deleteTemplate/);

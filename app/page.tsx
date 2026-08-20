@@ -1198,6 +1198,17 @@ export default function Home() {
   const interimTranscriptRef = useRef("");
   const shouldRestartRef = useRef(false);
 
+  useEffect(() => {
+    if (!showTemplateForm) return;
+    const editor = templateEditorRef.current;
+    if (!editor) return;
+
+    editor.innerHTML =
+      editingTemplate?.contentHtml ||
+      plainTextToHtml(editingTemplate?.content ?? "");
+    templateSelectionRef.current = null;
+  }, [editingTemplate, showTemplateForm]);
+
   const syncEditorState = useCallback(() => {
     const editor = noteRef.current;
     if (!editor) return;
@@ -4391,11 +4402,6 @@ export default function Home() {
                   aria-label="Template text"
                   aria-multiline="true"
                   data-placeholder={`HISTORY\n[Enter history]\n\nASSESSMENT\n[Enter assessment]\n\nPLAN\n[Enter plan]`}
-                  dangerouslySetInnerHTML={{
-                    __html:
-                      editingTemplate?.contentHtml ||
-                      plainTextToHtml(editingTemplate?.content ?? ""),
-                  }}
                   onMouseUp={rememberTemplateSelection}
                   onKeyUp={rememberTemplateSelection}
                   onBlur={rememberTemplateSelection}
