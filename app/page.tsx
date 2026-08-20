@@ -786,6 +786,12 @@ function extractCpapSummary(text: string) {
 }
 
 function extractHstSummary(text: string) {
+  const sectionText = text
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
   const normalizedText = text
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
@@ -852,10 +858,15 @@ function extractHstSummary(text: string) {
     /\b(?:Time\s+)?(?:(?:at|below|under)\s*(?:<=?\s*)?|<=?\s*|≤\s*)88\s*%\s*[:=-]?\s*(\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?))/i,
     /\b(?:SpO2|Oxygen Saturation|SaO2)\s*(?:<=?|≤)\s*88\s*%\s*[:=-]?\s*(\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?))/i,
   ]);
-  const impression = findValue([
-    /\b(?:Impression|Interpretation|Diagnosis)\s*[:=-]\s*((?:mild|moderate|severe)\s+(?:obstructive sleep apnea|sleep apnea|OSA))\b/i,
-    /\b((?:mild|moderate|severe)\s+(?:obstructive sleep apnea|sleep apnea|OSA))\b/i,
-  ]);
+  const impression = sectionText
+    .match(
+      /(?:^|\n)\s*(?:Impression|Interpretation|Diagnosis)\s*[:=-]?\s*([\s\S]*?)(?=\n\s*(?:(?:Recommendations?|Plan|Comments?|Notes?|Technique|Methodology|Report Status)\s*[:=-]|(?:Electronically\s+signed|Signed\s+by|Interpreting\s+Physician|Physician)\b)|$)/i,
+    )?.[1]
+    ?.split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 
   if (
     !respiratoryIndex &&
@@ -894,7 +905,7 @@ function extractHstSummary(text: string) {
     timeAtOrBelow88 ? `<=88% for ${timeAtOrBelow88}` : null,
   ].filter((value): value is string => Boolean(value));
   if (oxygenParts.length > 0) lines.push(`Oximetry: ${oxygenParts.join("; ")}.`);
-  if (impression) lines.push(`Impression: ${impression}.`);
+  if (impression) lines.push(`Impression: ${impression}`);
   return lines.join("\n");
 }
 
