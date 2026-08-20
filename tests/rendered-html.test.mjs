@@ -641,7 +641,10 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
     "2. Sleep-related hypoxemia was observed during the recording.",
     "The findings should be correlated with the patient's clinical history.",
     "Recommendations:",
-    "Consider PAP therapy.",
+    "1. Consider PAP therapy.",
+    "2. Avoid driving while drowsy.",
+    "Report Status:",
+    "Final",
   ].join("\n");
 
   assert.equal(
@@ -655,6 +658,10 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
         "Impression: 1. Moderate obstructive sleep apnea with a positional component.",
         "2. Sleep-related hypoxemia was observed during the recording.",
         "The findings should be correlated with the patient's clinical history.",
+      ].join("\n"),
+      [
+        "Recommendations: 1. Consider PAP therapy.",
+        "2. Avoid driving while drowsy.",
       ].join("\n"),
     ].join("\n"),
   );
