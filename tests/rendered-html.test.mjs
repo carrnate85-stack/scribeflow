@@ -636,7 +636,12 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
     "Mean SpO2: 93%",
     "SpO2 Nadir: 82%",
     "Time at <= 88%: 6.4 minutes",
-    "Impression: Moderate obstructive sleep apnea",
+    "Impression:",
+    "1. Moderate obstructive sleep apnea with a positional component.",
+    "2. Sleep-related hypoxemia was observed during the recording.",
+    "The findings should be correlated with the patient's clinical history.",
+    "Recommendations:",
+    "Consider PAP therapy.",
   ].join("\n");
 
   assert.equal(
@@ -646,7 +651,11 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
       "Recording time: 7 hours 14 minutes.",
       "Respiratory findings: REI 18.6 events/hour; supine REI 27.4 events/hour; ODI 17.9 events/hour.",
       "Oximetry: mean SpO2 93%; nadir 82%; <=88% for 6.4 minutes.",
-      "Impression: Moderate obstructive sleep apnea.",
+      [
+        "Impression: 1. Moderate obstructive sleep apnea with a positional component.",
+        "2. Sleep-related hypoxemia was observed during the recording.",
+        "The findings should be correlated with the patient's clinical history.",
+      ].join("\n"),
     ].join("\n"),
   );
 });
