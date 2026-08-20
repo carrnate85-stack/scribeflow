@@ -118,8 +118,11 @@ test("includes quicktext, template, and local-save workflows", async () => {
 
   assert.match(page, /\.normalexam/);
   assert.match(page, /\.cpap/);
+  assert.match(page, /\.hst/);
   assert.match(page, /extractCpapSummary/);
+  assert.match(page, /extractHstSummary/);
   assert.match(page, /PAP PDF/);
+  assert.match(page, /Paste HST/);
   assert.match(page, /handlePapPdfUpload/);
   assert.match(page, /editingQuicktext/);
   assert.match(page, /openQuicktextForm/);
@@ -127,6 +130,9 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Quicktext deleted/);
   assert.match(page, /Edit quicktext/);
   assert.match(page, /PAP compliance summary ready for \.cpap/);
+  assert.match(page, /HST summary ready for \.hst/);
+  assert.match(page, /Processed only in memory/);
+  assert.match(page, /setHstPasteText\(""\)/);
   assert.match(page, /Original PDF permanently deleted/);
   assert.match(page, /SOAP Note/);
   assert.match(page, /Procedure Note/);
@@ -568,7 +574,7 @@ test("summarizes PAP compliance metrics for the .cpap field", async () => {
     await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
   ).replace(/\r\n/g, "\n");
   const functionBody = page.match(
-    /function extractCpapSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction extractPdfMeasurements/,
+    /function extractCpapSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction extractHstSummary/,
   )?.[1];
   assert.ok(functionBody, "PAP compliance extraction function is missing");
 
@@ -600,6 +606,47 @@ test("summarizes PAP compliance metrics for the .cpap field", async () => {
       "95th percentile pressure: 11.5 cmH2O.",
       "95th percentile leak: 23.6 L/min.",
       "Residual AHI: 0.5 events/hour.",
+    ].join("\n"),
+  );
+});
+
+test("summarizes pasted HST metrics for the .hst field", async () => {
+  const page = (
+    await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
+  ).replace(/\r\n/g, "\n");
+  const functionBody = page.match(
+    /function extractHstSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction extractPdfMeasurements/,
+  )?.[1];
+  assert.ok(functionBody, "HST extraction function is missing");
+
+  const runnableBody = functionBody
+    .replace(/\(patterns: RegExp\[\]\)/g, "(patterns)")
+    .replace(/\(labelPattern: string\)/g, "(labelPattern)")
+    .replace(/\(value: string\)/g, "(value)")
+    .replace(/: string\[\]/g, "")
+    .replace(/\(value\): value is string/g, "(value)");
+  const extractHstSummary = new Function("text", runnableBody);
+  const reportText = [
+    "Home Sleep Test",
+    "Study Date: 08/18/2026",
+    "Total Recording Time: 7 hours 14 minutes",
+    "Overall REI: 18.6 events/hour",
+    "Supine REI: 27.4 events/hour",
+    "ODI: 17.9 events/hour",
+    "Mean SpO2: 93%",
+    "SpO2 Nadir: 82%",
+    "Time at <= 88%: 6.4 minutes",
+    "Impression: Moderate obstructive sleep apnea",
+  ].join("\n");
+
+  assert.equal(
+    extractHstSummary(reportText),
+    [
+      "HST date: 08/18/2026.",
+      "Recording time: 7 hours 14 minutes.",
+      "Respiratory findings: REI 18.6 events/hour; supine REI 27.4 events/hour; ODI 17.9 events/hour.",
+      "Oximetry: mean SpO2 93%; nadir 82%; <=88% for 6.4 minutes.",
+      "Impression: Moderate obstructive sleep apnea.",
     ].join("\n"),
   );
 });
