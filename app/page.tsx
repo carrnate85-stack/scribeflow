@@ -867,6 +867,15 @@ function extractHstSummary(text: string) {
     .filter(Boolean)
     .join("\n")
     .trim();
+  const recommendations = sectionText
+    .match(
+      /(?:^|\n)\s*Recommendations?\s*[:=-]?\s*([\s\S]*?)(?=\n\s*(?:(?:Plan|Comments?|Notes?|Technique|Methodology|Report Status)\s*[:=-]|(?:Electronically\s+signed|Signed\s+by|Interpreting\s+Physician|Physician)\b)|$)/i,
+    )?.[1]
+    ?.split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 
   if (
     !respiratoryIndex &&
@@ -876,7 +885,8 @@ function extractHstSummary(text: string) {
     !oxygenNadir &&
     !meanSpo2 &&
     !timeAtOrBelow88 &&
-    !impression
+    !impression &&
+    !recommendations
   ) {
     return undefined;
   }
@@ -906,6 +916,7 @@ function extractHstSummary(text: string) {
   ].filter((value): value is string => Boolean(value));
   if (oxygenParts.length > 0) lines.push(`Oximetry: ${oxygenParts.join("; ")}.`);
   if (impression) lines.push(`Impression: ${impression}`);
+  if (recommendations) lines.push(`Recommendations: ${recommendations}`);
   return lines.join("\n");
 }
 
