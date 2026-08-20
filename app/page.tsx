@@ -94,6 +94,7 @@ type WhisperWorkerResponse =
 
 type PdfMeasurements = {
   cpap?: string;
+  hst?: string;
   name?: string;
   age?: string;
   gender?: string;
@@ -111,6 +112,7 @@ type PdfMeasurements = {
 
 const pdfFieldTokens = [
   ".cpap",
+  ".hst",
   ".name",
   ".age",
   ".gender",
@@ -783,6 +785,119 @@ function extractCpapSummary(text: string) {
   return lines.join("\n");
 }
 
+function extractHstSummary(text: string) {
+  const normalizedText = text
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalizedText) return undefined;
+
+  const findValue = (patterns: RegExp[]) => {
+    for (const pattern of patterns) {
+      const match = normalizedText.match(pattern);
+      if (match?.[1]) return match[1].replace(/\s+/g, " ").trim();
+    }
+    return undefined;
+  };
+  const findIndex = (labelPattern: string) => {
+    const overallPattern = new RegExp(
+      `\\b(?:overall|total)\\s+(${labelPattern})\\s*(?:\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      "i",
+    );
+    const overallMatch = normalizedText.match(overallPattern);
+    if (overallMatch?.[1] && overallMatch[2]) {
+      return { label: overallMatch[1], value: overallMatch[2] };
+    }
+
+    const generalPattern = new RegExp(
+      `\\b(${labelPattern})\\s*(?:\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      "gi",
+    );
+    for (const match of normalizedText.matchAll(generalPattern)) {
+      const prefix = normalizedText.slice(
+        Math.max(0, match.index - 18),
+        match.index,
+      );
+      if (/supine|non[- ]?supine/i.test(prefix)) continue;
+      return { label: match[1], value: match[2] };
+    }
+    return undefined;
+  };
+
+  const studyDate = findValue([
+    /\b(?:Date of Study|Study Date|Recording Date)\s*[:=-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\b/i,
+  ]);
+  const recordingTime = findValue([
+    /\b(?:Total )?(?:Recording|Monitoring|Analysis|Sleep) Time\s*[:=-]?\s*(\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?)(?:\s+\d+(?:\.\d+)?\s*(?:minutes?|mins?))?)/i,
+  ]);
+  const respiratoryIndex = findIndex("p?AHI|REI");
+  const supineIndexMatch = normalizedText.match(
+    /\bSupine\s+(p?AHI|REI)\s*(?:\([^)]*\))?\s*[:=-]?\s*(\d+(?:\.\d+)?)\b/i,
+  );
+  const rdi = findValue([
+    /\b(?:Overall\s+|Total\s+)?RDI\s*(?:\([^)]*\))?\s*[:=-]?\s*(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const odi = findValue([
+    /\b(?:Overall\s+|Total\s+)?(?:ODI|Oxygen Desaturation Index)\s*(?:\([^)]*\))?\s*[:=-]?\s*(\d+(?:\.\d+)?)\b/i,
+  ]);
+  const meanSpo2 = findValue([
+    /\b(?:Mean|Average|Avg\.?)\s+(?:SpO2|Oxygen Saturation|SaO2)\s*[:=-]?\s*(\d+(?:\.\d+)?\s*%?)/i,
+    /\b(?:SpO2|Oxygen Saturation|SaO2)\s+(?:Mean|Average|Avg\.?)\s*[:=-]?\s*(\d+(?:\.\d+)?\s*%?)/i,
+  ]);
+  const oxygenNadir = findValue([
+    /\b(?:SpO2|Oxygen Saturation|SaO2)?\s*(?:Nadir|Minimum|Min\.?)\s*(?:SpO2|Oxygen Saturation|SaO2)?\s*[:=-]?\s*(\d+(?:\.\d+)?\s*%?)/i,
+    /\bLowest\s+(?:SpO2|Oxygen Saturation|SaO2)\s*[:=-]?\s*(\d+(?:\.\d+)?\s*%?)/i,
+  ]);
+  const timeAtOrBelow88 = findValue([
+    /\b(?:Time\s+)?(?:(?:at|below|under)\s*(?:<=?\s*)?|<=?\s*|≤\s*)88\s*%\s*[:=-]?\s*(\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?))/i,
+    /\b(?:SpO2|Oxygen Saturation|SaO2)\s*(?:<=?|≤)\s*88\s*%\s*[:=-]?\s*(\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?))/i,
+  ]);
+  const impression = findValue([
+    /\b(?:Impression|Interpretation|Diagnosis)\s*[:=-]\s*((?:mild|moderate|severe)\s+(?:obstructive sleep apnea|sleep apnea|OSA))\b/i,
+    /\b((?:mild|moderate|severe)\s+(?:obstructive sleep apnea|sleep apnea|OSA))\b/i,
+  ]);
+
+  if (
+    !respiratoryIndex &&
+    !supineIndexMatch &&
+    !rdi &&
+    !odi &&
+    !oxygenNadir &&
+    !meanSpo2 &&
+    !timeAtOrBelow88 &&
+    !impression
+  ) {
+    return undefined;
+  }
+
+  const withPercent = (value: string) =>
+    value.includes("%") ? value : `${value}%`;
+  const lines: string[] = [];
+  if (studyDate) lines.push(`HST date: ${studyDate}.`);
+  if (recordingTime) lines.push(`Recording time: ${recordingTime}.`);
+  const respiratoryParts = [
+    respiratoryIndex
+      ? `${respiratoryIndex.label.toUpperCase()} ${respiratoryIndex.value} events/hour`
+      : null,
+    supineIndexMatch
+      ? `supine ${supineIndexMatch[1].toUpperCase()} ${supineIndexMatch[2]} events/hour`
+      : null,
+    rdi ? `RDI ${rdi} events/hour` : null,
+    odi ? `ODI ${odi} events/hour` : null,
+  ].filter((value): value is string => Boolean(value));
+  if (respiratoryParts.length > 0) {
+    lines.push(`Respiratory findings: ${respiratoryParts.join("; ")}.`);
+  }
+  const oxygenParts = [
+    meanSpo2 ? `mean SpO2 ${withPercent(meanSpo2)}` : null,
+    oxygenNadir ? `nadir ${withPercent(oxygenNadir)}` : null,
+    timeAtOrBelow88 ? `<=88% for ${timeAtOrBelow88}` : null,
+  ].filter((value): value is string => Boolean(value));
+  if (oxygenParts.length > 0) lines.push(`Oximetry: ${oxygenParts.join("; ")}.`);
+  if (impression) lines.push(`Impression: ${impression}.`);
+  return lines.join("\n");
+}
+
 function extractPdfMeasurements(text: string): PdfMeasurements {
   const normalizedText = text.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
   const sectionText = text
@@ -913,6 +1028,7 @@ function resolveMeasurementTokens(
     value ? (forHtml ? plainTextToHtml(value) : value) : fallback;
   return content
     .replace(/\.cpap\b/gi, fieldValue(measurements.cpap, ".cpap"))
+    .replace(/\.hst\b/gi, fieldValue(measurements.hst, ".hst"))
     .replace(
       /\.sleepquestionnaire\b/gi,
       fieldValue(measurements.sleepQuestionnaire, ".sleepquestionnaire"),
@@ -1121,6 +1237,11 @@ export default function Home() {
   const [papPdfStatus, setPapPdfStatus] = useState(
     "Choose a PAP compliance PDF to prepare .cpap",
   );
+  const [hstStatus, setHstStatus] = useState(
+    "Paste HST results to prepare .hst",
+  );
+  const [showHstPaste, setShowHstPaste] = useState(false);
+  const [hstPasteText, setHstPasteText] = useState("");
   const [deletePdfAfterScan, setDeletePdfAfterScan] = useState(true);
   const [isScanningPdf, setIsScanningPdf] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -1418,6 +1539,35 @@ export default function Home() {
     },
     [syncEditorState],
   );
+
+  function closeHstPaste() {
+    setHstPasteText("");
+    setShowHstPaste(false);
+  }
+
+  function importHstResults(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const summary = extractHstSummary(hstPasteText);
+    if (!summary) {
+      setHstStatus("No supported HST metrics were found");
+      setToast("No supported HST results found");
+      return;
+    }
+
+    const measurements: PdfMeasurements = { hst: summary };
+    setPdfMeasurements((current) => ({
+      ...(current || {}),
+      ...measurements,
+    }));
+    const populated = populateMeasurementTokensInNote(measurements);
+    setHstStatus(
+      populated
+        ? "HST summary filled into .hst in the note"
+        : "HST summary ready for .hst",
+    );
+    setToast("HST summary is ready");
+    closeHstPaste();
+  }
 
   async function processPdfFile(
     file: File,
@@ -3403,6 +3553,9 @@ export default function Home() {
     setPdfMeasurements(null);
     setPdfStatus("Choose a PDF to extract intake and sleep fields");
     setPapPdfStatus("Choose a PAP compliance PDF to prepare .cpap");
+    setHstStatus("Paste HST results to prepare .hst");
+    setHstPasteText("");
+    setShowHstPaste(false);
     setLastRecognizedPhrase("");
     setLearningHeard("");
     legacyPatientDataStorageKeys.forEach((key) =>
@@ -3870,6 +4023,17 @@ export default function Home() {
               onChange={handlePapPdfUpload}
               disabled={isScanningPdf}
             />
+            <button
+              className="pdf-import-button"
+              type="button"
+              onClick={() => {
+                setHstPasteText("");
+                setShowHstPaste(true);
+              }}
+            >
+              <span aria-hidden="true">HST</span>
+              Paste HST
+            </button>
             <label
               className="pdf-delete-option"
               title="Permanently delete the selected original PDF only after a successful import"
@@ -3885,7 +4049,7 @@ export default function Home() {
               Delete after import
             </label>
             <span className="pdf-import-live" role="status" aria-live="polite">
-              {pdfStatus}. {papPdfStatus}.
+              {pdfStatus}. {papPdfStatus}. {hstStatus}.
             </span>
           </div>
 
@@ -4106,6 +4270,56 @@ export default function Home() {
             </div>
           </div>
         )}
+
+      {showHstPaste && (
+        <div className="modal-backdrop" role="presentation">
+          <form
+            className="modal-card hst-paste-modal"
+            onSubmit={importHstResults}
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">Local HST import</p>
+                <h2>Paste HST results</h2>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={closeHstPaste}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="hst-privacy-note">
+              Processed only in memory. The pasted source is never saved.
+            </p>
+            <label>
+              HST report text
+              <textarea
+                value={hstPasteText}
+                onChange={(event) => setHstPasteText(event.target.value)}
+                placeholder="Paste the home sleep test results here..."
+                autoFocus
+                spellCheck={false}
+                required
+              />
+            </label>
+            <div className="modal-actions">
+              <button
+                className="button subtle"
+                type="button"
+                onClick={closeHstPaste}
+              >
+                Cancel
+              </button>
+              <button className="button primary" type="submit">
+                Prepare .hst
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showQuicktextForm && (
         <div className="modal-backdrop" role="presentation">

@@ -1480,6 +1480,23 @@ kbd {
   box-shadow: 0 30px 90px rgba(10, 29, 23, 0.26);
 }
 
+.hst-paste-modal {
+  width: min(680px, 100%);
+}
+
+.hst-paste-modal textarea {
+  min-height: 260px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.hst-privacy-note {
+  margin: -9px 0 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .whisper-update-modal {
   width: min(500px, calc(100vw - 32px));
 }
