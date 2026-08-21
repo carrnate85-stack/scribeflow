@@ -703,4 +703,19 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
     "Respiratory findings: REI 9.2 events/hour.",
     "falls back to the overall AHI or REI when scored thresholds are absent",
   );
+  assert.equal(
+    extractHstSummary(
+      [
+        "AHI 3% oxygen desaturation criteria: 22.7 events/hour",
+        "AHI (4% desaturation criteria): 17.4 events/hour",
+      ].join("\n"),
+    ),
+    "Respiratory findings: AHI (3%) 22.7 events/hour; AHI (4%) 17.4 events/hour.",
+    "recognizes threshold labels that include desaturation criteria",
+  );
+  assert.equal(
+    extractHstSummary("AHI 3%"),
+    undefined,
+    "never mistakes a percentage threshold for an events-per-hour result",
+  );
 });
