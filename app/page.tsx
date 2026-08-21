@@ -785,6 +785,65 @@ function extractCpapSummary(text: string) {
   return lines.join("\n");
 }
 
+function normalizePatientName(value: string) {
+  const commaParts = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(",")
+    .map((part) => part.match(/[a-z0-9]+/g) || []);
+  const tokens =
+    commaParts.length > 1
+      ? [...commaParts.slice(1).flat(), ...commaParts[0]]
+      : commaParts[0];
+  const meaningfulTokens = tokens.filter(
+    (token) => !/^(?:jr|sr|ii|iii|iv)$/.test(token),
+  );
+  return {
+    first: meaningfulTokens[0] || "",
+    last: meaningfulTokens[meaningfulTokens.length - 1] || "",
+  };
+}
+
+function extractHstPatientName(text: string) {
+  const sectionText = text
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n?/g, "\n");
+  const normalizedText = sectionText.replace(/\s+/g, " ").trim();
+  const lastName = normalizedText.match(
+    /\bLast Name\s*[:=-]\s*([A-Za-zÀ-ž][A-Za-zÀ-ž .'-]{0,59}?)(?=\s+First Name\s*[:=-]|\s+(?:DOB|Date of Birth|MRN|Medical Record|Patient ID|Gender|Sex|Age|Study Date|Date of Study)\s*[:=-]|$)/i,
+  )?.[1];
+  const firstName = normalizedText.match(
+    /\bFirst Name\s*[:=-]\s*([A-Za-zÀ-ž][A-Za-zÀ-ž .'-]{0,59}?)(?=\s+Last Name\s*[:=-]|\s+(?:DOB|Date of Birth|MRN|Medical Record|Patient ID|Gender|Sex|Age|Study Date|Date of Study)\s*[:=-]|$)/i,
+  )?.[1];
+  if (firstName && lastName) return `${firstName.trim()} ${lastName.trim()}`;
+
+  const labeledLine = sectionText.match(
+    /(?:^|\n)\s*(?:Patient(?:'s)?(?:\s+Name)?|Name)\s*[:=-]\s*([^\n]{2,100})/i,
+  )?.[1];
+  if (!labeledLine) return undefined;
+  const cleanedName = labeledLine
+    .replace(
+      /\s+(?:DOB|Date of Birth|MRN|Medical Record(?: Number)?|Patient ID|Gender|Sex|Age|Study Date|Date of Study)\s*[:=-].*$/i,
+      "",
+    )
+    .trim();
+  return cleanedName || undefined;
+}
+
+function patientNamesMatch(intakeName: string, hstName: string) {
+  const intake = normalizePatientName(intakeName);
+  const hst = normalizePatientName(hstName);
+  return Boolean(
+    intake.first &&
+      intake.last &&
+      hst.first &&
+      hst.last &&
+      intake.first === hst.first &&
+      intake.last === hst.last,
+  );
+}
+
 function extractHstSummary(text: string) {
   const sectionText = text
     .replace(/\u00a0/g, " ")
@@ -1599,6 +1658,26 @@ export default function Home() {
 
   function importHstResults(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const intakeName = pdfMeasurements?.name?.trim();
+    if (!intakeName) {
+      setHstStatus("Import the current intake PDF before adding HST results");
+      setToast("HST not imported — current intake name is required");
+      return;
+    }
+
+    const hstName = extractHstPatientName(hstPasteText);
+    if (!hstName) {
+      setHstStatus("No patient name was found in the pasted HST results");
+      setToast("HST not imported — patient name could not be verified");
+      return;
+    }
+
+    if (!patientNamesMatch(intakeName, hstName)) {
+      setHstStatus("HST patient name does not match the current intake form");
+      setToast("Patient name mismatch — HST was not imported");
+      return;
+    }
+
     const summary = extractHstSummary(hstPasteText);
     if (!summary) {
       setHstStatus("No supported HST metrics were found");
@@ -4344,7 +4423,8 @@ export default function Home() {
               </button>
             </div>
             <p className="hst-privacy-note">
-              Processed only in memory. The pasted source is never saved.
+              Processed only in memory and never saved. The HST patient name
+              must match the currently imported intake form.
             </p>
             <label>
               HST report text
