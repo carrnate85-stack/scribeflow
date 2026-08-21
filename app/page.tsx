@@ -829,6 +829,26 @@ function extractHstSummary(text: string) {
     }
     return undefined;
   };
+  const findScoredIndex = (percent: string) => {
+    const afterLabelPattern = new RegExp(
+      `\\b(?:overall\\s+|total\\s+)?(p?AHI|REI)\\s*(?:[-–—:]\\s*)?(?:\\(\\s*)?${percent}\\s*%\\s*\\)?(?:\\s*\\([^)]*\\))?(?:\\s+(?:desat(?:uration)?s?|criterion|rule|AASM\\s*[\\w.-]+))*\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      "i",
+    );
+    const afterLabelMatch = normalizedText.match(afterLabelPattern);
+    if (afterLabelMatch?.[1] && afterLabelMatch[2]) {
+      return { label: afterLabelMatch[1], value: afterLabelMatch[2] };
+    }
+
+    const beforeLabelPattern = new RegExp(
+      `\\b${percent}\\s*%\\s*(?:desat(?:uration)?s?\\s*)?(?:[-–—:]\\s*)?(p?AHI|REI)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      "i",
+    );
+    const beforeLabelMatch = normalizedText.match(beforeLabelPattern);
+    if (beforeLabelMatch?.[1] && beforeLabelMatch[2]) {
+      return { label: beforeLabelMatch[1], value: beforeLabelMatch[2] };
+    }
+    return undefined;
+  };
 
   const studyDate = findValue([
     /\b(?:Date of Study|Study Date|Recording Date)\s*[:=-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\b/i,
@@ -837,6 +857,8 @@ function extractHstSummary(text: string) {
     /\b(?:Total )?(?:Recording|Monitoring|Analysis|Sleep) Time\s*[:=-]?\s*(\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?)(?:\s+\d+(?:\.\d+)?\s*(?:minutes?|mins?))?)/i,
   ]);
   const respiratoryIndex = findIndex("p?AHI|REI");
+  const ahi3Percent = findScoredIndex("3");
+  const ahi4Percent = findScoredIndex("4");
   const supineIndexMatch = normalizedText.match(
     /\bSupine\s+(p?AHI|REI)\s*(?:\([^)]*\))?\s*[:=-]?\s*(\d+(?:\.\d+)?)\b/i,
   );
@@ -879,6 +901,8 @@ function extractHstSummary(text: string) {
 
   if (
     !respiratoryIndex &&
+    !ahi3Percent &&
+    !ahi4Percent &&
     !supineIndexMatch &&
     !rdi &&
     !odi &&
@@ -897,7 +921,13 @@ function extractHstSummary(text: string) {
   if (studyDate) lines.push(`HST date: ${studyDate}.`);
   if (recordingTime) lines.push(`Recording time: ${recordingTime}.`);
   const respiratoryParts = [
-    respiratoryIndex
+    ahi3Percent
+      ? `${ahi3Percent.label.toUpperCase()} (3%) ${ahi3Percent.value} events/hour`
+      : null,
+    ahi4Percent
+      ? `${ahi4Percent.label.toUpperCase()} (4%) ${ahi4Percent.value} events/hour`
+      : null,
+    !ahi3Percent && !ahi4Percent && respiratoryIndex
       ? `${respiratoryIndex.label.toUpperCase()} ${respiratoryIndex.value} events/hour`
       : null,
     supineIndexMatch

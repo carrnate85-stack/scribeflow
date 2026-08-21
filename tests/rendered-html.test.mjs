@@ -622,6 +622,7 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
   const runnableBody = functionBody
     .replace(/\(patterns: RegExp\[\]\)/g, "(patterns)")
     .replace(/\(labelPattern: string\)/g, "(labelPattern)")
+    .replace(/\(percent: string\)/g, "(percent)")
     .replace(/\(value: string\)/g, "(value)")
     .replace(/: string\[\]/g, "")
     .replace(/\(value\): value is string/g, "(value)");
@@ -630,7 +631,8 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
     "Home Sleep Test",
     "Study Date: 08/18/2026",
     "Total Recording Time: 7 hours 14 minutes",
-    "Overall REI: 18.6 events/hour",
+    "AHI 3% (AASM 1A): 18.6 events/hour",
+    "AHI-4%: 14.2 events/hour",
     "Supine REI: 27.4 events/hour",
     "ODI: 17.9 events/hour",
     "Mean SpO2: 93%",
@@ -652,7 +654,7 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
     [
       "HST date: 08/18/2026.",
       "Recording time: 7 hours 14 minutes.",
-      "Respiratory findings: REI 18.6 events/hour; supine REI 27.4 events/hour; ODI 17.9 events/hour.",
+      "Respiratory findings: AHI (3%) 18.6 events/hour; AHI (4%) 14.2 events/hour; supine REI 27.4 events/hour; ODI 17.9 events/hour.",
       "Oximetry: mean SpO2 93%; nadir 82%; <=88% for 6.4 minutes.",
       [
         "Impression: 1. Moderate obstructive sleep apnea with a positional component.",
@@ -664,5 +666,10 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
         "2. Avoid driving while drowsy.",
       ].join("\n"),
     ].join("\n"),
+  );
+  assert.equal(
+    extractHstSummary("Overall REI: 9.2 events/hour"),
+    "Respiratory findings: REI 9.2 events/hour.",
+    "falls back to the overall AHI or REI when scored thresholds are absent",
   );
 });
