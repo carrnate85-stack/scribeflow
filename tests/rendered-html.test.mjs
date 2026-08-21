@@ -131,7 +131,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Edit quicktext/);
   assert.match(page, /PAP compliance summary ready for \.cpap/);
   assert.match(page, /HST summary ready for \.hst/);
-  assert.match(page, /Processed only in memory/);
+  assert.match(page, /Processed only in memory and never saved/);
+  assert.match(page, /patientNamesMatch/);
+  assert.match(page, /Patient name mismatch — HST was not imported/);
+  assert.match(page, /current intake name is required/);
   assert.match(page, /setHstPasteText\(""\)/);
   assert.match(page, /Original PDF permanently deleted/);
   assert.match(page, /SOAP Note/);
@@ -574,7 +577,7 @@ test("summarizes PAP compliance metrics for the .cpap field", async () => {
     await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
   ).replace(/\r\n/g, "\n");
   const functionBody = page.match(
-    /function extractCpapSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction extractHstSummary/,
+    /function extractCpapSummary\(text: string\) \{([\s\S]*?)\n\}\n\nfunction normalizePatientName/,
   )?.[1];
   assert.ok(functionBody, "PAP compliance extraction function is missing");
 
@@ -610,6 +613,33 @@ test("summarizes PAP compliance metrics for the .cpap field", async () => {
   );
 });
 
+test("requires the pasted HST patient name to match the current intake", async () => {
+  const page = (
+    await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
+  ).replace(/\r\n/g, "\n");
+  const functionSource = page.match(
+    /function normalizePatientName[\s\S]*?\n\}\n\nfunction extractHstSummary/,
+  )?.[0].replace(/\n\nfunction extractHstSummary$/, "");
+  assert.ok(functionSource, "HST patient-name safety functions are missing");
+  const runnableSource = functionSource
+    .replace(/\(value: string\)/g, "(value)")
+    .replace(/\(text: string\)/g, "(text)")
+    .replace(/\(intakeName: string, hstName: string\)/g, "(intakeName, hstName)");
+  const safety = new Function(
+    `${runnableSource}; return { extractHstPatientName, patientNamesMatch };`,
+  )();
+
+  assert.equal(
+    safety.extractHstPatientName(
+      "Patient Name: Smith, Jordan A.  DOB: 01/02/1980 Study Date: 08/18/2026",
+    ),
+    "Smith, Jordan A.",
+  );
+  assert.equal(safety.patientNamesMatch("Jordan Smith", "Smith, Jordan A."), true);
+  assert.equal(safety.patientNamesMatch("Jordan Smith", "Taylor Smith"), false);
+  assert.equal(safety.patientNamesMatch("Jordan Smith", "Jordan Jones"), false);
+});
+
 test("summarizes pasted HST metrics for the .hst field", async () => {
   const page = (
     await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
@@ -629,6 +659,7 @@ test("summarizes pasted HST metrics for the .hst field", async () => {
   const extractHstSummary = new Function("text", runnableBody);
   const reportText = [
     "Home Sleep Test",
+    "Patient Name: Jordan Smith",
     "Study Date: 08/18/2026",
     "Total Recording Time: 7 hours 14 minutes",
     "AHI 3% (AASM 1A): 18.6 events/hour",
