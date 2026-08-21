@@ -866,7 +866,7 @@ function extractHstSummary(text: string) {
   };
   const findIndex = (labelPattern: string) => {
     const overallPattern = new RegExp(
-      `\\b(?:overall|total)\\s+(${labelPattern})\\s*(?:\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      `\\b(?:overall|total)\\s+(${labelPattern})\\s*(?:\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b(?!\\s*%)`,
       "i",
     );
     const overallMatch = normalizedText.match(overallPattern);
@@ -875,7 +875,7 @@ function extractHstSummary(text: string) {
     }
 
     const generalPattern = new RegExp(
-      `\\b(${labelPattern})\\s*(?:\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      `\\b(${labelPattern})\\s*(?:\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b(?!\\s*%)`,
       "gi",
     );
     for (const match of normalizedText.matchAll(generalPattern)) {
@@ -889,8 +889,10 @@ function extractHstSummary(text: string) {
     return undefined;
   };
   const findScoredIndex = (percent: string) => {
+    const descriptor =
+      "(?:oxygen\\s+desat(?:uration)?s?|desat(?:uration)?s?|criterion|criteria|rule|scoring|AASM\\s*[\\w.-]+|CMS)";
     const afterLabelPattern = new RegExp(
-      `\\b(?:overall\\s+|total\\s+)?(p?AHI|REI)\\s*(?:[-–—:]\\s*)?(?:\\(\\s*)?${percent}\\s*%\\s*\\)?(?:\\s*\\([^)]*\\))?(?:\\s+(?:desat(?:uration)?s?|criterion|rule|AASM\\s*[\\w.-]+))*\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      `\\b(?:overall\\s+|total\\s+)?(p?AHI|REI)\\s*(?:[-–—:]\\s*)?(?:\\(\\s*)?${percent}\\s*%\\s*(?:${descriptor}\\s*)*\\)?(?:\\s*\\([^)]*\\))?\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
       "i",
     );
     const afterLabelMatch = normalizedText.match(afterLabelPattern);
@@ -899,7 +901,7 @@ function extractHstSummary(text: string) {
     }
 
     const beforeLabelPattern = new RegExp(
-      `\\b${percent}\\s*%\\s*(?:desat(?:uration)?s?\\s*)?(?:[-–—:]\\s*)?(p?AHI|REI)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
+      `(?:\\(\\s*)?\\b${percent}\\s*%\\s*(?:${descriptor}\\s*)*\\)?\\s*(?:[-–—:]\\s*)?(p?AHI|REI)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\b`,
       "i",
     );
     const beforeLabelMatch = normalizedText.match(beforeLabelPattern);
