@@ -172,6 +172,9 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /OneDrive\\Documents\\ScribeFlow/);
   assert.match(page, /OneDrive sync status/);
   assert.match(page, /Sync now/);
+  assert.match(page, /showSyncDashboard/);
+  assert.match(page, /Open shared library status/);
+  assert.match(page, /className="modal-card sync-modal"/);
   assert.match(page, /App update/);
   assert.match(page, /Merged safely; conflicts preserved/);
   assert.match(page, /applyVocabularyCorrections/);
@@ -310,9 +313,8 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /duplicateTemplate/);
   assert.match(page, /deleteTemplate/);
   assert.match(page, /text\/html/);
-  assert.match(page, /saveNote/);
-  assert.match(page, /\/documents\/save-note/);
-  assert.match(page, /Save note to Documents/);
+  assert.doesNotMatch(page, />\s*Use template\s*</);
+  assert.doesNotMatch(page, /Save note to Documents/);
   assert.match(page, /handlePdfUpload/);
   assert.match(page, /showOpenFilePicker/);
   assert.match(page, /deletePdfAfterScan, setDeletePdfAfterScan\] = useState\(true\)/);
@@ -372,8 +374,8 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Date of Birth/);
   assert.match(page, /Gender/);
   assert.match(page, /gender\?\.toLowerCase\(\)/);
-  assert.match(page, /Not saved · save to OneDrive/);
-  assert.match(page, /Saved in OneDrive/);
+  assert.doesNotMatch(page, /Not saved · save to OneDrive/);
+  assert.doesNotMatch(page, /Local-only|â|Ã|Â/);
   assert.match(page, /legacyPatientDataStorageKeys/);
   assert.doesNotMatch(page, /localStorage\.setItem\(storageKeys\.note/);
   assert.doesNotMatch(page, /localStorage\.setItem\(storageKeys\.noteHtml/);
