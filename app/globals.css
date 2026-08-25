@@ -409,15 +409,117 @@ kbd {
 }
 
 .shared-library-location {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   color: var(--muted);
   font-size: 0.7rem;
   line-height: 1.35;
-  padding: 0 0.1rem;
+  padding: 2px 0.1rem 0;
 }
 
 .shared-library-location code {
   color: var(--ink-soft);
   font-size: inherit;
+}
+
+.sync-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #d8e4de;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.sync-dashboard-heading,
+.sync-dashboard-row {
+  display: grid;
+  align-items: center;
+  gap: 7px;
+}
+
+.sync-dashboard-heading {
+  grid-template-columns: 1fr auto;
+}
+
+.sync-dashboard-heading > span,
+.sync-dashboard-row > span:not(.sync-dot) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sync-dashboard-heading strong,
+.sync-dashboard-row strong {
+  color: #405047;
+  font-size: 10px;
+}
+
+.sync-dashboard-heading small,
+.sync-dashboard-row small {
+  overflow: hidden;
+  color: #84908a;
+  font-size: 8px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-dashboard-heading button {
+  padding: 5px 8px;
+  border: 1px solid #bdd1c6;
+  border-radius: 7px;
+  color: var(--forest);
+  background: white;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.sync-dashboard-heading button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.sync-dashboard-row {
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  padding-top: 6px;
+  border-top: 1px solid #e7eeea;
+}
+
+.sync-dashboard-row em {
+  max-width: 88px;
+  color: #6f7d76;
+  font-size: 7px;
+  font-style: normal;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4b9b75;
+  box-shadow: 0 0 0 2px #e3f1ea;
+}
+
+.sync-dashboard-row.update-row .sync-dot {
+  background: #7d8e86;
+  box-shadow: 0 0 0 2px #edf1ef;
+}
+
+.sync-conflict-notice {
+  padding: 7px 8px;
+  border: 1px solid #e7c98b;
+  border-radius: 7px;
+  color: #765a24;
+  background: #fff8e8;
+  font-size: 8px;
+  line-height: 1.4;
 }
 
 .library-item {

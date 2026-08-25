@@ -18,7 +18,9 @@ if (-not $NoUpdate -and (Test-Path -LiteralPath $updateScript)) {
         & $updateScript
     }
     catch {
-        Write-Warning "ScribeFlow update check was skipped: $($_.Exception.Message)"
+        Write-Warning "ScribeFlow could not finish updating after automatic retries: $($_.Exception.Message)"
+        Write-Host "The current version will open. Update details are available in ScribeFlow's Shared library panel." `
+            -ForegroundColor Yellow
     }
 }
 

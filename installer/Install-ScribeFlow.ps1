@@ -57,6 +57,27 @@ function Stop-ScribeFlowProcess {
     }
 }
 
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Operation,
+        [string]$Description,
+        [int]$Attempts = 4
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        try {
+            & $Operation
+            return
+        }
+        catch {
+            if ($attempt -eq $Attempts) {
+                throw "$Description failed after $Attempts attempts: $($_.Exception.Message)"
+            }
+            Start-Sleep -Milliseconds (500 * $attempt)
+        }
+    }
+}
+
 function Get-ScribeFlowDesktop {
     $knownDesktop = [Environment]::GetFolderPath("Desktop")
     $candidates = @(
@@ -85,6 +106,7 @@ foreach ($requiredPath in @(
     (Join-Path $payloadRoot "scripts\whisper-release.json"),
     (Join-Path $payloadRoot "scripts\whisper-release-utils.mjs"),
     (Join-Path $payloadRoot "scripts\document-storage-utils.mjs"),
+    (Join-Path $payloadRoot "scripts\library-sync-utils.mjs"),
     (Join-Path $payloadRoot "assets\ScribeFlow.ico"),
     (Join-Path $payloadRoot "dist\server\index.js"),
     (Join-Path $payloadRoot "dist\client")
@@ -126,15 +148,35 @@ Write-Host "Installing ScribeFlow locally..." -ForegroundColor Cyan
 Copy-Item -LiteralPath $payloadRoot -Destination $stagingRoot -Recurse -Force
 
 if (Test-Path -LiteralPath $backupRoot) {
-    Remove-Item -LiteralPath $backupRoot -Recurse -Force
+    Invoke-WithRetry -Description "Removing the previous rollback copy" `
+        -Operation {
+            Remove-Item -LiteralPath $backupRoot -Recurse -Force
+        }
 }
+$hadPreviousInstall = Test-Path -LiteralPath $installRoot
 if (Test-Path -LiteralPath $installRoot) {
-    Move-Item -LiteralPath $installRoot -Destination $backupRoot
+    Invoke-WithRetry -Description "Preparing the installed app for upgrade" `
+        -Operation {
+            Move-Item -LiteralPath $installRoot -Destination $backupRoot
+        }
 }
-Move-Item -LiteralPath $stagingRoot -Destination $installRoot
-if (Test-Path -LiteralPath $backupRoot) {
-    Remove-Item -LiteralPath $backupRoot -Recurse -Force
-}
+
+try {
+    Invoke-WithRetry -Description "Activating the new ScribeFlow version" `
+        -Operation {
+            Move-Item -LiteralPath $stagingRoot -Destination $installRoot
+        }
+    $installedVersionPath = Join-Path $installRoot "app-version.json"
+    if (-not (Test-Path -LiteralPath $installedVersionPath -PathType Leaf)) {
+        throw "The installed version marker is missing."
+    }
+    $verifiedInstalledVersion = [string](
+        (Get-Content -LiteralPath $installedVersionPath -Raw |
+            ConvertFrom-Json).version
+    )
+    if ($verifiedInstalledVersion -ne $appVersion) {
+        throw "The installed version did not match the downloaded release."
+    }
 
 $installedLauncher = Join-Path $installRoot "Launch ScribeFlow.cmd"
 $installedIcon = Join-Path $installRoot "assets\ScribeFlow.ico"
@@ -176,6 +218,49 @@ New-ItemProperty -Path $uninstallKey -Name NoModify -PropertyType DWord `
     -Value 1 -Force | Out-Null
 New-ItemProperty -Path $uninstallKey -Name NoRepair -PropertyType DWord `
     -Value 1 -Force | Out-Null
+}
+catch {
+    $installFailure = $_
+    if (Test-Path -LiteralPath $installRoot) {
+        Invoke-WithRetry -Description "Removing the incomplete installation" `
+            -Operation {
+                Remove-Item -LiteralPath $installRoot -Recurse -Force
+            }
+    }
+    if ($hadPreviousInstall -and (Test-Path -LiteralPath $backupRoot)) {
+        Invoke-WithRetry -Description "Restoring the previous ScribeFlow version" `
+            -Operation {
+                Move-Item -LiteralPath $backupRoot -Destination $installRoot
+            }
+        $restoredVersionPath = Join-Path $installRoot "app-version.json"
+        if (Test-Path -LiteralPath $restoredVersionPath) {
+            try {
+                $restoredVersion = [string](
+                    (Get-Content -LiteralPath $restoredVersionPath -Raw |
+                        ConvertFrom-Json).version
+                )
+                Set-ItemProperty -Path $uninstallKey -Name DisplayVersion `
+                    -Value $restoredVersion -ErrorAction SilentlyContinue
+            }
+            catch {
+                # Restoring the app matters more than refreshing display metadata.
+            }
+        }
+    }
+    throw $installFailure
+}
+
+if (Test-Path -LiteralPath $backupRoot) {
+    try {
+        Invoke-WithRetry -Description "Removing the verified rollback copy" `
+            -Operation {
+                Remove-Item -LiteralPath $backupRoot -Recurse -Force
+            }
+    }
+    catch {
+        Write-Warning "ScribeFlow updated, but the rollback copy could not be removed."
+    }
+}
 
 Write-Host ""
 Write-Host "ScribeFlow was installed successfully." -ForegroundColor Green

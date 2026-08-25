@@ -25,6 +25,7 @@ type Template = {
 type TemplateVaultPayload = {
   version: 1;
   updatedAt: number;
+  lastWriter?: string;
   templates: Template[];
 };
 
@@ -45,8 +46,39 @@ type VocabularyItem = {
 type WritingToolsVaultPayload = {
   version: 1;
   updatedAt: number;
+  lastWriter?: string;
   quicktexts: Quicktext[];
   vocabulary: VocabularyItem[];
+};
+
+type VaultWriteResponse<T> = {
+  payload: T;
+  conflictCount: number;
+  conflictFile: string | null;
+  message: string;
+};
+
+type SharedVaultStatus = {
+  exists: boolean;
+  updatedAt: number | null;
+  modifiedAt: number | null;
+  lastWriter: string | null;
+  conflicts: number;
+};
+
+type SharedStorageStatus = {
+  checkedAt: number;
+  deviceName: string;
+  documentsRoot: string;
+  oneDrive: boolean;
+  templates: SharedVaultStatus;
+  writingTools: SharedVaultStatus;
+  update: {
+    stage?: string;
+    version?: string;
+    message?: string;
+    updatedAt?: string;
+  } | null;
 };
 
 type DictationEngine = "whisper" | "chrome";
@@ -433,6 +465,8 @@ function parseTemplateVaultPayload(
     return {
       version: 1,
       updatedAt: parsed.updatedAt,
+      lastWriter:
+        typeof parsed.lastWriter === "string" ? parsed.lastWriter : undefined,
       templates,
     };
   } catch {
@@ -514,6 +548,8 @@ function parseWritingToolsVaultPayload(
     return {
       version: 1,
       updatedAt: parsed.updatedAt,
+      lastWriter:
+        typeof parsed.lastWriter === "string" ? parsed.lastWriter : undefined,
       quicktexts,
       vocabulary,
     };
@@ -548,6 +584,16 @@ function mergeWritingToolsForMigration(
     quicktexts: Array.from(quicktexts.values()),
     vocabulary: Array.from(vocabulary.values()),
   };
+}
+
+function formatSyncTime(value: number | null | undefined) {
+  if (!value) return "Not synced yet";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function plainTextToHtml(text: string) {
@@ -1342,6 +1388,10 @@ export default function Home() {
   const [writingToolsReady, setWritingToolsReady] = useState(false);
   const [writingToolsStorageStatus, setWritingToolsStorageStatus] =
     useState("Loading shared copy");
+  const [sharedStorageStatus, setSharedStorageStatus] =
+    useState<SharedStorageStatus | null>(null);
+  const [syncRefreshing, setSyncRefreshing] = useState(false);
+  const [syncConflictNotice, setSyncConflictNotice] = useState("");
   const [pdfMeasurements, setPdfMeasurements] =
     useState<PdfMeasurements | null>(null);
   const [pdfStatus, setPdfStatus] = useState(
@@ -1397,6 +1447,11 @@ export default function Home() {
   const recognitionRef = useRef<Recognition | null>(null);
   const templatesUpdatedAtRef = useRef(0);
   const writingToolsUpdatedAtRef = useRef(0);
+  const templateBaseRef = useRef<TemplateVaultPayload | null>(null);
+  const writingToolsBaseRef = useRef<WritingToolsVaultPayload | null>(null);
+  const refreshSharedLibraryRef = useRef<
+    ((showFeedback?: boolean) => Promise<void>) | null
+  >(null);
   const whisperLoadPromiseRef = useRef<Promise<void> | null>(null);
   const whisperResultHandlerRef = useRef<
     (text: string, session: number) => void
@@ -2032,12 +2087,16 @@ export default function Home() {
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            payload,
+            base: templateBaseRef.current,
+          }),
         },
       );
       if (!response.ok) {
         throw new Error("The durable template backup could not be updated");
       }
+      return (await response.json()) as VaultWriteResponse<TemplateVaultPayload>;
     },
     [],
   );
@@ -2049,12 +2108,16 @@ export default function Home() {
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            payload,
+            base: writingToolsBaseRef.current,
+          }),
         },
       );
       if (!response.ok) {
         throw new Error("The shared writing-tools copy could not be updated");
       }
+      return (await response.json()) as VaultWriteResponse<WritingToolsVaultPayload>;
     },
     [],
   );
@@ -2097,6 +2160,7 @@ export default function Home() {
       } catch {
         diskPayload = null;
       }
+      templateBaseRef.current = diskPayload;
 
       const browserPayload: TemplateVaultPayload | null = browserTemplates
         ? {
@@ -2139,11 +2203,35 @@ export default function Home() {
         diskPayload.updatedAt === selectedPayload.updatedAt &&
         JSON.stringify(diskPayload.templates) === serializedTemplates;
       if (diskMatches) {
+        templateBaseRef.current = selectedPayload;
         setTemplateStorageStatus("Synced in OneDrive");
       } else {
         try {
-          await persistTemplatesToDisk(selectedPayload);
-          setTemplateStorageStatus("Synced in OneDrive");
+          const result = await persistTemplatesToDisk(selectedPayload);
+          templateBaseRef.current = result.payload;
+          templatesUpdatedAtRef.current = result.payload.updatedAt;
+          const reconciledTemplates = JSON.stringify(result.payload.templates);
+          setTemplates(result.payload.templates);
+          window.localStorage.setItem(
+            storageKeys.templates,
+            reconciledTemplates,
+          );
+          window.localStorage.setItem(
+            storageKeys.templatesBackup,
+            reconciledTemplates,
+          );
+          window.localStorage.setItem(
+            storageKeys.templatesUpdatedAt,
+            String(result.payload.updatedAt),
+          );
+          setTemplateStorageStatus(
+            result.conflictCount > 0
+              ? "Merged safely; conflicts preserved"
+              : "Synced in OneDrive",
+          );
+          if (result.conflictCount > 0) {
+            setSyncConflictNotice(result.message);
+          }
         } catch {
           setTemplateStorageStatus("Browser backup only");
         }
@@ -2164,6 +2252,7 @@ export default function Home() {
       } catch {
         diskPayload = null;
       }
+      writingToolsBaseRef.current = diskPayload;
 
       const hasBrowserWritingTools =
         browserQuicktexts !== null || browserVocabulary !== null;
@@ -2226,11 +2315,35 @@ export default function Home() {
         JSON.stringify(diskPayload.quicktexts) === serializedQuicktexts &&
         JSON.stringify(diskPayload.vocabulary) === serializedVocabulary;
       if (diskMatches) {
+        writingToolsBaseRef.current = selectedPayload;
         setWritingToolsStorageStatus("Synced in OneDrive");
       } else {
         try {
-          await persistWritingToolsToDisk(selectedPayload);
-          setWritingToolsStorageStatus("Synced in OneDrive");
+          const result = await persistWritingToolsToDisk(selectedPayload);
+          writingToolsBaseRef.current = result.payload;
+          writingToolsUpdatedAtRef.current = result.payload.updatedAt;
+          setQuicktexts(result.payload.quicktexts);
+          setVocabulary(result.payload.vocabulary);
+          window.localStorage.setItem(
+            storageKeys.quicktexts,
+            JSON.stringify(result.payload.quicktexts),
+          );
+          window.localStorage.setItem(
+            storageKeys.vocabulary,
+            JSON.stringify(result.payload.vocabulary),
+          );
+          window.localStorage.setItem(
+            storageKeys.writingToolsUpdatedAt,
+            String(result.payload.updatedAt),
+          );
+          setWritingToolsStorageStatus(
+            result.conflictCount > 0
+              ? "Merged safely; conflicts preserved"
+              : "Synced in OneDrive",
+          );
+          if (result.conflictCount > 0) {
+            setSyncConflictNotice(result.message);
+          }
         } catch {
           setWritingToolsStorageStatus("Browser backup only");
         }
@@ -2258,13 +2371,18 @@ export default function Home() {
     if (!templatesReady || !writingToolsReady) return;
 
     let cancelled = false;
-    const refreshSharedLibrary = async () => {
+    const refreshSharedLibrary = async (showFeedback = false) => {
+      if (showFeedback) setSyncRefreshing(true);
       try {
-        const [templateResponse, writingToolsResponse] = await Promise.all([
+        const [templateResponse, writingToolsResponse, statusResponse] =
+          await Promise.all([
           fetch("http://127.0.0.1:3001/config/templates", {
             cache: "no-store",
           }),
           fetch("http://127.0.0.1:3001/config/writing-tools", {
+            cache: "no-store",
+          }),
+          fetch("http://127.0.0.1:3001/config/status", {
             cache: "no-store",
           }),
         ]);
@@ -2274,6 +2392,9 @@ export default function Home() {
           const payload = parseTemplateVaultPayload(
             await templateResponse.text(),
           );
+          if (payload && payload.updatedAt >= templatesUpdatedAtRef.current) {
+            templateBaseRef.current = payload;
+          }
           if (payload && payload.updatedAt > templatesUpdatedAtRef.current) {
             const serialized = JSON.stringify(payload.templates);
             templatesUpdatedAtRef.current = payload.updatedAt;
@@ -2297,6 +2418,12 @@ export default function Home() {
           );
           if (
             payload &&
+            payload.updatedAt >= writingToolsUpdatedAtRef.current
+          ) {
+            writingToolsBaseRef.current = payload;
+          }
+          if (
+            payload &&
             payload.updatedAt > writingToolsUpdatedAtRef.current
           ) {
             writingToolsUpdatedAtRef.current = payload.updatedAt;
@@ -2317,10 +2444,21 @@ export default function Home() {
             setWritingToolsStorageStatus("Updated from OneDrive");
           }
         }
+        if (statusResponse.ok) {
+          setSharedStorageStatus(
+            (await statusResponse.json()) as SharedStorageStatus,
+          );
+        }
+        if (showFeedback) setToast("Shared libraries checked");
       } catch {
-        // Keep the browser backup active while the local helper is restarting.
+        if (showFeedback) {
+          setToast("Shared libraries could not be checked; browser backups remain");
+        }
+      } finally {
+        if (showFeedback) setSyncRefreshing(false);
       }
     };
+    refreshSharedLibraryRef.current = refreshSharedLibrary;
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
@@ -2330,6 +2468,7 @@ export default function Home() {
     const timer = window.setInterval(() => {
       void refreshSharedLibrary();
     }, 5000);
+    void refreshSharedLibrary();
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
@@ -2338,6 +2477,7 @@ export default function Home() {
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      refreshSharedLibraryRef.current = null;
     };
   }, [templatesReady, writingToolsReady]);
 
@@ -3304,7 +3444,34 @@ export default function Home() {
     );
     setWritingToolsStorageStatus("Syncing to Documents...");
     void persistWritingToolsToDisk(payload)
-      .then(() => setWritingToolsStorageStatus("Synced in OneDrive"))
+      .then((result) => {
+        writingToolsBaseRef.current = result.payload;
+        writingToolsUpdatedAtRef.current = result.payload.updatedAt;
+        setQuicktexts(result.payload.quicktexts);
+        setVocabulary(result.payload.vocabulary);
+        window.localStorage.setItem(
+          storageKeys.quicktexts,
+          JSON.stringify(result.payload.quicktexts),
+        );
+        window.localStorage.setItem(
+          storageKeys.vocabulary,
+          JSON.stringify(result.payload.vocabulary),
+        );
+        window.localStorage.setItem(
+          storageKeys.writingToolsUpdatedAt,
+          String(result.payload.updatedAt),
+        );
+        setWritingToolsStorageStatus(
+          result.conflictCount > 0
+            ? "Merged safely; conflicts preserved"
+            : "Synced in OneDrive",
+        );
+        if (result.conflictCount > 0) {
+          setSyncConflictNotice(result.message);
+          setToast("Both computers' writing-tool changes were preserved");
+        }
+        void refreshSharedLibraryRef.current?.();
+      })
       .catch(() => {
         setWritingToolsStorageStatus("Browser backup only");
         setToast(
@@ -3478,7 +3645,34 @@ export default function Home() {
     );
     setTemplateStorageStatus("Protecting templates...");
     void persistTemplatesToDisk(payload)
-      .then(() => setTemplateStorageStatus("Synced in OneDrive"))
+      .then((result) => {
+        templateBaseRef.current = result.payload;
+        templatesUpdatedAtRef.current = result.payload.updatedAt;
+        const reconciledTemplates = JSON.stringify(result.payload.templates);
+        setTemplates(result.payload.templates);
+        window.localStorage.setItem(
+          storageKeys.templates,
+          reconciledTemplates,
+        );
+        window.localStorage.setItem(
+          storageKeys.templatesBackup,
+          reconciledTemplates,
+        );
+        window.localStorage.setItem(
+          storageKeys.templatesUpdatedAt,
+          String(result.payload.updatedAt),
+        );
+        setTemplateStorageStatus(
+          result.conflictCount > 0
+            ? "Merged safely; conflicts preserved"
+            : "Synced in OneDrive",
+        );
+        if (result.conflictCount > 0) {
+          setSyncConflictNotice(result.message);
+          setToast("Both computers' template changes were preserved");
+        }
+        void refreshSharedLibraryRef.current?.();
+      })
       .catch(() => {
         setTemplateStorageStatus("Browser backup only");
         setToast("Template saved in browser; durable backup needs the launcher");
@@ -3894,9 +4088,81 @@ export default function Home() {
             <kbd>⌘K</kbd>
           </label>
 
-          <div className="shared-library-location">
-            Shared folder: <code>OneDrive\Documents\ScribeFlow</code>
-          </div>
+          <section className="sync-dashboard" aria-label="OneDrive sync status">
+            <div className="sync-dashboard-heading">
+              <span>
+                <strong>Shared library</strong>
+                <small>
+                  {sharedStorageStatus?.oneDrive
+                    ? `OneDrive on ${sharedStorageStatus.deviceName}`
+                    : "Local Documents fallback"}
+                </small>
+              </span>
+              <button
+                type="button"
+                disabled={syncRefreshing}
+                onClick={() =>
+                  void refreshSharedLibraryRef.current?.(true)
+                }
+              >
+                {syncRefreshing ? "Checking..." : "Sync now"}
+              </button>
+            </div>
+            <div className="sync-dashboard-row">
+              <span className="sync-dot" aria-hidden="true" />
+              <span>
+                <strong>Templates</strong>
+                <small>
+                  {formatSyncTime(sharedStorageStatus?.templates.modifiedAt)}
+                  {sharedStorageStatus?.templates.lastWriter
+                    ? ` · ${sharedStorageStatus.templates.lastWriter}`
+                    : ""}
+                </small>
+              </span>
+              <em>{templateStorageStatus}</em>
+            </div>
+            <div className="sync-dashboard-row">
+              <span className="sync-dot" aria-hidden="true" />
+              <span>
+                <strong>Quicktext + vocabulary</strong>
+                <small>
+                  {formatSyncTime(sharedStorageStatus?.writingTools.modifiedAt)}
+                  {sharedStorageStatus?.writingTools.lastWriter
+                    ? ` · ${sharedStorageStatus.writingTools.lastWriter}`
+                    : ""}
+                </small>
+              </span>
+              <em>{writingToolsStorageStatus}</em>
+            </div>
+            {sharedStorageStatus?.update?.message && (
+              <div className="sync-dashboard-row update-row">
+                <span className="sync-dot" aria-hidden="true" />
+                <span>
+                  <strong>App update</strong>
+                  <small>{sharedStorageStatus.update.message}</small>
+                </span>
+                <em>{sharedStorageStatus.update.stage || "Ready"}</em>
+              </div>
+            )}
+            {(syncConflictNotice ||
+              (sharedStorageStatus &&
+                sharedStorageStatus.templates.conflicts +
+                  sharedStorageStatus.writingTools.conflicts >
+                  0)) && (
+              <div className="sync-conflict-notice">
+                {syncConflictNotice ||
+                  "Conflicting edits were preserved in the Conflicts folders."}
+              </div>
+            )}
+            <div className="shared-library-location">
+              Shared folder: <code>OneDrive\Documents\ScribeFlow</code>
+              {sharedStorageStatus && (
+                <span>
+                  Last checked {formatSyncTime(sharedStorageStatus.checkedAt)}
+                </span>
+              )}
+            </div>
+          </section>
 
           <div className="library-list">
             {activePanel === "quicktext" ? (

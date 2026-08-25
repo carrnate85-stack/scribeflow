@@ -83,7 +83,11 @@ browser storage are never included in the installer.
 Each normal ScribeFlow launch checks this public repository's latest Release.
 When a newer version is available, the launcher downloads both the installer
 and its SHA-256 file, verifies the package, applies the update, and then opens
-ScribeFlow. If GitHub is unavailable, the update is skipped and the installed
+ScribeFlow. Installation is retried up to three times, the downloaded version
+is verified after replacement, and a failed replacement restores the previous
+working version. Update stages and errors are recorded under
+`%LOCALAPPDATA%\ScribeFlow\runtime` and appear in the in-app Shared library
+panel. If GitHub is unavailable, the update is skipped and the installed
 version opens normally.
 
 Owner-created `agent/*` pull requests are built and tested automatically. A
@@ -142,11 +146,17 @@ and up to 20 timestamped recovery copies are synced through
 browser Quicktext and vocabulary entries are merged into this shared copy the
 first time the updated app runs on each PC. ScribeFlow checks the same shared
 root every five seconds and whenever its window regains focus, so changes made
-on another PC appear without restarting. Templates, Quicktext, and vocabulary
-all use the single `OneDrive\Documents\ScribeFlow` root; no second local
-Documents path is used when OneDrive is available. The selected dictation
-engine and microphone remain local to each PC. Do not place patient identifiers
-in reusable configuration items.
+on another PC appear without restarting. The Shared library panel shows the
+last check, last saved time, last-writing PC, update health, conflict count, and
+a **Sync now** control. Writes use a three-way merge: unrelated changes from
+two PCs are combined, while competing edits receive a visible conflict copy.
+Full base, local, remote, and merged copies are retained under the corresponding
+local OneDrive `Conflicts` folder instead of silently overwriting data.
+Templates, Quicktext, and vocabulary all use the single
+`OneDrive\Documents\ScribeFlow` root; no second local Documents path is used
+when OneDrive is available. The selected dictation engine and microphone remain
+local to each PC. Do not place patient identifiers in reusable configuration
+items.
 
 Only use OneDrive for protected health information when that account and your
 organization's configuration are approved for that purpose.
