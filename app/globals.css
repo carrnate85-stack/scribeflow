@@ -1249,7 +1249,7 @@ kbd {
   width: min(760px, calc(100vw - 32px));
   max-height: 92px;
   position: fixed;
-  bottom: 154px;
+  bottom: 124px;
   left: 50%;
   z-index: 60;
   display: flex;
@@ -1348,19 +1348,19 @@ kbd {
 }
 
 .dictation-dock {
-  width: min(980px, calc(100vw - 386px));
-  min-height: 122px;
+  width: min(820px, calc(100vw - 386px));
+  min-height: 96px;
   position: fixed;
-  bottom: 16px;
+  bottom: 12px;
   left: calc(50% + 169px);
   z-index: 50;
   display: grid;
-  grid-template-columns: minmax(245px, 1fr) minmax(120px, 0.65fr) 74px minmax(150px, 0.8fr);
+  grid-template-columns: minmax(225px, 1fr) minmax(90px, 0.5fr) 58px minmax(120px, 0.65fr);
   align-items: center;
-  gap: 20px;
-  padding: 15px 28px;
+  gap: 14px;
+  padding: 10px 18px;
   border: 1px solid #cad9d2;
-  border-radius: 17px;
+  border-radius: 14px;
   background: rgba(251, 252, 251, 0.97);
   box-shadow: 0 18px 46px rgba(23, 52, 43, 0.2);
   transform: translateX(-50%);
@@ -1382,7 +1382,7 @@ kbd {
 .dictation-state {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .status-dot {
@@ -1403,7 +1403,7 @@ kbd {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px 8px;
+  gap: 2px 6px;
 }
 
 .dictation-state div > strong,
@@ -1412,28 +1412,29 @@ kbd {
 }
 
 .dictation-state strong {
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.dictation-state span:last-child {
+.dictation-state div > span {
   color: #85908b;
-  font-size: 9px;
+  font-size: 8px;
+  line-height: 1.25;
 }
 
 .dictation-device-picker {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 4px;
+  margin-top: 2px;
   color: #66736d;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
 }
 
 .dictation-device-picker select {
-  width: 126px;
+  width: 116px;
   min-width: 0;
-  padding: 4px 22px 4px 7px;
+  padding: 3px 20px 3px 6px;
   border: 1px solid #ccd8d3;
   border-radius: 6px;
   color: var(--forest);
@@ -1448,7 +1449,7 @@ kbd {
 }
 
 .waveform {
-  height: 48px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1464,18 +1465,18 @@ kbd {
 }
 
 .recording .waveform i {
-  max-height: 48px;
+  max-height: 36px;
   background: var(--sage);
   animation: wave 1s ease-in-out infinite alternate;
 }
 
 .record-button {
-  width: 66px;
-  height: 66px;
+  width: 54px;
+  height: 54px;
   position: relative;
   display: grid;
   place-items: center;
-  border: 7px solid #e6efeb;
+  border: 6px solid #e6efeb;
   border-radius: 50%;
   background: var(--forest);
   cursor: pointer;
@@ -1536,13 +1537,13 @@ kbd {
 .record-time {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 5px;
   text-align: right;
 }
 
 .record-time strong {
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 16px;
+  font-size: 14px;
   letter-spacing: 0.07em;
 }
 
@@ -1553,7 +1554,7 @@ kbd {
 
 .voice-learning-button {
   align-self: flex-end;
-  padding: 6px 9px;
+  padding: 5px 7px;
   border: 1px solid #cbd9d3;
   border-radius: 7px;
   color: var(--forest);
@@ -1920,7 +1921,7 @@ kbd {
   .dictation-dock {
     width: calc(100vw - 320px);
     left: calc(50% + 140px);
-    grid-template-columns: minmax(170px, 1fr) 66px 105px;
+    grid-template-columns: minmax(170px, 1fr) 54px 100px;
   }
 
   .waveform {
@@ -2073,13 +2074,13 @@ kbd {
 
   .dictation-dock {
     width: calc(100vw - 24px);
-    min-height: 92px;
+    min-height: 80px;
     position: fixed;
     bottom: 10px;
     left: 50%;
     grid-template-columns: 1fr 62px auto;
-    gap: 10px;
-    padding: 12px 16px;
+    gap: 8px;
+    padding: 9px 12px;
     border-radius: 14px;
     z-index: 50;
     transform: translateX(-50%);
@@ -2087,12 +2088,12 @@ kbd {
 
   .interim-transcript {
     width: calc(100vw - 24px);
-    bottom: 116px;
+    bottom: 104px;
   }
 
   .record-button {
-    width: 58px;
-    height: 58px;
+    width: 50px;
+    height: 50px;
   }
 
   .dictation-state div > span,
@@ -2106,7 +2107,7 @@ kbd {
   }
 
   .dictation-device-picker select {
-    width: 154px;
+    width: 138px;
   }
 
   .quicktext-suggestions {
