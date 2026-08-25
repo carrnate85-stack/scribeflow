@@ -4272,6 +4272,27 @@ export default function Home() {
           Local only — nothing leaves this device
         </div>
         <div className="top-actions">
+          <label
+            className="topbar-microphone-picker"
+            title="Microphone used for local dictation"
+          >
+            <span>Mic</span>
+            <select
+              value={selectedMicrophoneId}
+              onChange={changeMicrophone}
+              disabled={isRecording}
+              aria-label="Top bar microphone selection"
+            >
+              <option value="default">System default</option>
+              {microphones
+                .filter((microphone) => microphone.deviceId !== "default")
+                .map((microphone) => (
+                  <option value={microphone.deviceId} key={microphone.deviceId}>
+                    {microphone.label}
+                  </option>
+                ))}
+            </select>
+          </label>
           <button
             className={`sync-status-button system-status-button ${
               systemIssueCount > 0 ? "has-attention" : ""
@@ -4870,39 +4891,14 @@ export default function Home() {
                         <option value="chrome">Chrome offline</option>
                       </select>
                     </label>
-                    <div
-                      className="dictation-device-picker microphone-picker"
-                      title={
-                        dictationEngine === "chrome"
-                          ? "Chrome offline dictation uses the browser or Windows default microphone"
-                          : "Choose the microphone used by local Whisper"
-                      }
-                    >
+                    <div className="dictation-device-picker microphone-test-picker">
                       <span>Mic</span>
-                      <select
-                        value={
-                          dictationEngine === "whisper"
-                            ? selectedMicrophoneId
-                            : "default"
-                        }
-                        onChange={changeMicrophone}
-                        disabled={isRecording || dictationEngine === "chrome"}
-                        aria-label="Microphone input"
+                      <span
+                        className="selected-microphone-name"
+                        title={selectedMicrophoneLabel}
                       >
-                        <option value="default">System default</option>
-                        {microphones
-                          .filter(
-                            (microphone) => microphone.deviceId !== "default",
-                          )
-                          .map((microphone) => (
-                            <option
-                              value={microphone.deviceId}
-                              key={microphone.deviceId}
-                            >
-                              {microphone.label}
-                            </option>
-                          ))}
-                      </select>
+                        {selectedMicrophoneLabel}
+                      </span>
                       <button
                         className="microphone-test-button"
                         type="button"
