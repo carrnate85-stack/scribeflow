@@ -207,6 +207,23 @@ button:disabled {
   box-shadow: 0 0 0 3px #faefd9;
 }
 
+.system-status-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #4b9b75;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.system-status-button.has-attention .system-status-icon {
+  background: #c69135;
+}
+
 .whisper-setup-banner {
   width: min(1540px, 100%);
   min-height: 70px;
@@ -595,6 +612,147 @@ kbd {
   background: #fff8e8;
   font-size: 10px;
   line-height: 1.4;
+}
+
+.system-check-modal {
+  width: min(650px, 100%);
+}
+
+.system-check-summary {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid #dbe6e0;
+  border-radius: 10px;
+  background: #f8fbf9;
+}
+
+.system-check-summary > span {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  font-weight: 900;
+}
+
+.system-check-summary > span.ready {
+  background: #4b9b75;
+}
+
+.system-check-summary > span.attention {
+  background: #c69135;
+}
+
+.system-check-summary > div,
+.system-check-row > span:not(.system-check-dot) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.system-check-summary strong,
+.system-check-row strong {
+  color: #405047;
+  font-size: 12px;
+}
+
+.system-check-summary small,
+.system-check-row small {
+  overflow: hidden;
+  color: #7d8b84;
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-check-summary button,
+.system-row-action,
+.system-check-footer button {
+  padding: 6px 9px;
+  border: 1px solid #bdd1c6;
+  border-radius: 7px;
+  color: var(--forest);
+  background: white;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.system-check-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+  border: 1px solid #dbe6e0;
+  border-radius: 10px;
+  background: white;
+}
+
+.system-check-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-top: 1px solid #edf1ef;
+}
+
+.system-check-row:first-child {
+  border-top: 0;
+}
+
+.system-check-row em {
+  max-width: 130px;
+  color: #6f7d76;
+  font-size: 9px;
+  font-style: normal;
+  text-align: right;
+}
+
+.system-check-dot {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #4b9b75;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.system-check-row.attention .system-check-dot {
+  background: #c69135;
+}
+
+.system-microphone-meter {
+  width: min(220px, 100%);
+  margin-top: 3px;
+}
+
+.microphone-test-result.heard {
+  color: #2f7b5d;
+}
+
+.microphone-test-result.quiet,
+.microphone-test-result.failed {
+  color: #9a613f;
+}
+
+.system-check-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: #7d8b84;
+  font-size: 9px;
 }
 
 .library-item {
@@ -1367,6 +1525,112 @@ kbd {
   backdrop-filter: blur(18px);
 }
 
+.dictation-dock.collapsed {
+  width: 154px;
+  min-height: 58px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 9px;
+  padding: 6px 28px 6px 8px;
+}
+
+.dictation-dock.collapsed:not(.custom-position) {
+  top: 8px;
+  bottom: auto;
+  left: 180px;
+  transform: none;
+}
+
+.dictation-dock.dragging {
+  user-select: none;
+  box-shadow: 0 20px 54px rgba(23, 52, 43, 0.28);
+}
+
+.dock-drag-handle,
+.dock-collapse-button {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: #7d8b85;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dock-drag-handle {
+  width: 34px;
+  height: 14px;
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: grab;
+  font-size: 10px;
+  letter-spacing: 2px;
+  touch-action: none;
+}
+
+.dock-drag-handle:active,
+.dictation-dock.dragging .dock-drag-handle {
+  cursor: grabbing;
+}
+
+.dock-collapse-button {
+  width: 22px;
+  height: 22px;
+  top: 5px;
+  right: 5px;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.dock-collapse-button:hover,
+.dock-drag-handle:hover {
+  color: var(--forest);
+  background: var(--forest-soft);
+}
+
+.dictation-dock.collapsed .record-button {
+  width: 46px;
+  height: 46px;
+  border-width: 5px;
+}
+
+.dictation-dock.collapsed .mic-shape {
+  transform: scale(0.82);
+}
+
+.collapsed-dictation-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.collapsed-dictation-info strong {
+  color: var(--forest);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.collapsed-dictation-info > span {
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #728078;
+  font-size: 8px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsed-dictation-info .status-dot {
+  width: 7px;
+  height: 7px;
+}
+
 .dictation-dock.recording {
   border-color: #df8d78;
   box-shadow:
@@ -1399,15 +1663,15 @@ kbd {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-.dictation-state div {
+.dictation-state > div {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px 6px;
 }
 
-.dictation-state div > strong,
-.dictation-state div > span {
+.dictation-state > div > strong,
+.dictation-state > div > span {
   grid-column: 1 / -1;
 }
 
@@ -1415,7 +1679,7 @@ kbd {
   font-size: 11px;
 }
 
-.dictation-state div > span {
+.dictation-state > div > span {
   color: #85908b;
   font-size: 8px;
   line-height: 1.25;
@@ -1446,6 +1710,66 @@ kbd {
 .dictation-device-picker select:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.microphone-picker select {
+  width: 82px;
+}
+
+.microphone-test-button {
+  min-width: 30px;
+  height: 21px;
+  padding: 0 5px;
+  border: 1px solid #c6d6ce;
+  border-radius: 6px;
+  color: var(--forest);
+  background: white;
+  font-size: 7px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.microphone-test-button:hover:not(:disabled) {
+  border-color: var(--sage);
+  background: var(--forest-soft);
+}
+
+.microphone-test-inline {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  color: #6f7d76;
+  font-size: 8px;
+}
+
+.microphone-level,
+.system-microphone-meter {
+  height: 6px;
+  overflow: hidden;
+  display: block;
+  border-radius: 999px;
+  background: #e4ebe7;
+}
+
+.microphone-level i,
+.system-microphone-meter i {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6aa58a, #df9b65);
+  transition: width 90ms linear;
+}
+
+.microphone-test-inline.heard {
+  color: #2f7b5d;
+}
+
+.microphone-test-inline.quiet,
+.microphone-test-inline.failed {
+  color: #9a613f;
 }
 
 .waveform {
@@ -2086,6 +2410,20 @@ kbd {
     transform: translateX(-50%);
   }
 
+  .dictation-dock.collapsed {
+    width: 148px;
+    min-height: 56px;
+    grid-template-columns: 46px minmax(0, 1fr);
+    padding: 5px 27px 5px 7px;
+  }
+
+  .dictation-dock.collapsed:not(.custom-position) {
+    top: 4px;
+    bottom: auto;
+    left: 150px;
+    transform: none;
+  }
+
   .interim-transcript {
     width: calc(100vw - 24px);
     bottom: 104px;
@@ -2096,18 +2434,41 @@ kbd {
     height: 50px;
   }
 
-  .dictation-state div > span,
+  .dictation-state > div > span,
   .record-time span {
     display: none;
   }
 
-  .dictation-state div {
+  .dictation-state > div {
     display: flex;
     flex-direction: column;
   }
 
   .dictation-device-picker select {
     width: 138px;
+  }
+
+  .microphone-picker select {
+    width: 96px;
+  }
+
+  .system-check-summary {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .system-check-summary > button {
+    grid-column: 1 / -1;
+  }
+
+  .system-check-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .system-check-row > em,
+  .system-row-action {
+    grid-column: 2;
+    justify-self: start;
+    text-align: left;
   }
 
   .quicktext-suggestions {
