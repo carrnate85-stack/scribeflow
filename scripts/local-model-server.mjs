@@ -579,7 +579,7 @@ function writeDurableWritingTools(payload) {
 function readJsonFile(path) {
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    return JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
   } catch {
     return null;
   }
