@@ -92,6 +92,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
     new URL("../scripts/local-model-server.mjs", import.meta.url),
     "utf8",
   );
+  const librarySyncUtils = await readFile(
+    new URL("../scripts/library-sync-utils.mjs", import.meta.url),
+    "utf8",
+  );
   const portableWebServer = await readFile(
     new URL("../scripts/portable-web-server.mjs", import.meta.url),
     "utf8",
@@ -166,6 +170,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /Updated from OneDrive/);
   assert.match(page, /refreshSharedLibrary/);
   assert.match(page, /OneDrive\\Documents\\ScribeFlow/);
+  assert.match(page, /OneDrive sync status/);
+  assert.match(page, /Sync now/);
+  assert.match(page, /App update/);
+  assert.match(page, /Merged safely; conflicts preserved/);
   assert.match(page, /applyVocabularyCorrections/);
   assert.match(page, /SpeechRecognitionPhrase/);
   assert.match(page, /DictationEngine = "whisper" \| "chrome"/);
@@ -441,6 +449,12 @@ test("includes quicktext, template, and local-save workflows", async () => {
     localModelServer,
     /url\.pathname === "\/config\/writing-tools"/,
   );
+  assert.match(localModelServer, /url\.pathname === "\/config\/status"/);
+  assert.match(localModelServer, /writeConflictArchive/);
+  assert.match(localModelServer, /reconcileTemplatePayload/);
+  assert.match(localModelServer, /reconcileWritingToolsPayload/);
+  assert.match(librarySyncUtils, /mergeCollectionThreeWay/);
+  assert.match(librarySyncUtils, /delete-versus-edit/);
   assert.match(
     localModelServer,
     /const writingToolsRoot = resolve\(documentsRoot, "Writing Tools"\)/,
@@ -512,6 +526,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installerBuilder, /whisper-release\.json/);
   assert.match(installerBuilder, /whisper-release-utils\.mjs/);
   assert.match(installerBuilder, /document-storage-utils\.mjs/);
+  assert.match(installerBuilder, /library-sync-utils\.mjs/);
   assert.match(installerBuilder, /assets\\ScribeFlow\.ico/);
   assert.match(installerBuilder, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.match(installer, /\$installRoot = Join-Path \$programsRoot "ScribeFlow"/);
@@ -519,6 +534,9 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installer, /Whisper is kept separately/);
   assert.match(installer, /whisper-release\.json/);
   assert.match(installer, /document-storage-utils\.mjs/);
+  assert.match(installer, /library-sync-utils\.mjs/);
+  assert.match(installer, /Restoring the previous ScribeFlow version/);
+  assert.match(installer, /verifiedInstalledVersion/);
   assert.match(installer, /\$desktopShortcut\.IconLocation = "\$installedIcon,0"/);
   assert.match(installer, /\$startMenuShortcut\.IconLocation = "\$installedIcon,0"/);
   assert.doesNotMatch(installer, /\$SkipModelDownload/);
@@ -531,6 +549,9 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(appUpdater, /ScribeFlow-Windows-Online-Installer\.zip/);
   assert.match(appUpdater, /Get-FileHash[\s\S]*?-Algorithm SHA256/);
   assert.match(appUpdater, /Install-ScribeFlow\.ps1/);
+  assert.match(appUpdater, /attempt \$attempt of 3/);
+  assert.match(appUpdater, /update-status\.json/);
+  assert.match(appUpdater, /Installed version verification failed/);
   assert.match(installerWorkflow, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.doesNotMatch(installerBuilder, /templates\.json|Downloads\\.*\.pdf/);
   assert.match(styles, /\.whisper-setup-banner/);

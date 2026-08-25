@@ -15,10 +15,14 @@ import {
 } from "node:fs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { saveNoteDocument } from "./document-storage-utils.mjs";
+import {
+  reconcileTemplatePayload,
+  reconcileWritingToolsPayload,
+} from "./library-sync-utils.mjs";
 import { deleteVerifiedPdf } from "./pdf-delete-utils.mjs";
 import {
   isInstalledWhisperReleaseCurrent,
@@ -75,8 +79,14 @@ const templateBackupsRoot = resolve(templatesRoot, "Backups");
 const writingToolsRoot = resolve(documentsRoot, "Writing Tools");
 const writingToolsFile = resolve(writingToolsRoot, "writing-tools.json");
 const writingToolsBackupsRoot = resolve(writingToolsRoot, "Backups");
+const templateConflictsRoot = resolve(templatesRoot, "Conflicts");
+const writingToolsConflictsRoot = resolve(writingToolsRoot, "Conflicts");
 const legacyTemplatesFile = resolve(dataRoot, "templates.json");
 const legacyTemplateBackupsRoot = resolve(dataRoot, "template-backups");
+const updateStatusFile = resolve(dataRoot, "runtime", "update-status.json");
+const deviceName = String(process.env.COMPUTERNAME || hostname() || "This PC")
+  .trim()
+  .slice(0, 80);
 const downloadsRoot = resolve(process.env.USERPROFILE || homedir(), "Downloads");
 const host = "127.0.0.1";
 const configuredPort = Number.parseInt(
@@ -566,6 +576,101 @@ function writeDurableWritingTools(payload) {
   });
 }
 
+function readJsonFile(path) {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeConflictArchive({
+  root,
+  prefix,
+  base,
+  current,
+  incoming,
+  merged,
+  conflicts,
+}) {
+  if (conflicts.length === 0) return null;
+  mkdirSync(root, { recursive: true });
+  const stamp = Date.now();
+  const fileName = `${prefix}-conflict-${stamp}.json`;
+  const path = resolve(root, fileName);
+  const temporaryPath = `${path}.new`;
+  writeFileSync(
+    temporaryPath,
+    JSON.stringify(
+      {
+        version: 1,
+        detectedAt: stamp,
+        deviceName,
+        conflicts,
+        base,
+        current,
+        incoming,
+        merged,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  renameSync(temporaryPath, path);
+  return fileName;
+}
+
+function countConflictArchives(root, prefix) {
+  if (!existsSync(root)) return 0;
+  return readdirSync(root).filter((file) =>
+    new RegExp(`^${prefix}-conflict-\\d+\\.json$`).test(file),
+  ).length;
+}
+
+function getVaultStatus(path, payload) {
+  if (!payload || !existsSync(path)) {
+    return { exists: false, updatedAt: null, modifiedAt: null, lastWriter: null };
+  }
+  return {
+    exists: true,
+    updatedAt: payload.updatedAt,
+    modifiedAt: statSync(path).mtimeMs,
+    lastWriter: payload.lastWriter || null,
+  };
+}
+
+function readVaultRequest(value, validator) {
+  const payload = value?.payload || value;
+  const base = value?.payload ? value.base || null : null;
+  if (!validator(payload) || (base && !validator(base))) return null;
+  return { payload, base };
+}
+
+function sharedStorageStatus() {
+  const templatePayload = readDurableTemplates();
+  const writingToolsPayload = readDurableWritingTools();
+  return {
+    checkedAt: Date.now(),
+    deviceName,
+    documentsRoot,
+    oneDrive: /[\\/]OneDrive(?:[^\\/]*)?[\\/]/i.test(documentsRoot),
+    templates: {
+      ...getVaultStatus(templatesFile, templatePayload),
+      conflicts: countConflictArchives(templateConflictsRoot, "templates"),
+    },
+    writingTools: {
+      ...getVaultStatus(writingToolsFile, writingToolsPayload),
+      conflicts: countConflictArchives(
+        writingToolsConflictsRoot,
+        "writing-tools",
+      ),
+    },
+    update: readJsonFile(updateStatusFile),
+  };
+}
+
 migrateLegacyTemplates();
 
 const server = createServer((request, response) => {
@@ -698,6 +803,20 @@ const server = createServer((request, response) => {
     });
     return;
   }
+  if (url.pathname === "/config/status") {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      sendText(response, 405, "Method not allowed");
+      return;
+    }
+    const body = JSON.stringify(sharedStorageStatus());
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Length": String(Buffer.byteLength(body)),
+      "Content-Type": "application/json; charset=utf-8",
+    });
+    response.end(request.method === "HEAD" ? undefined : body);
+    return;
+  }
   if (url.pathname === "/config/writing-tools") {
     if (request.method === "GET" || request.method === "HEAD") {
       const payload = readDurableWritingTools();
@@ -731,13 +850,41 @@ const server = createServer((request, response) => {
       request.on("end", () => {
         if (rejected) return;
         try {
-          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          if (!isWritingToolsPayload(payload)) {
+          const received = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          const requestPayload = readVaultRequest(
+            received,
+            isWritingToolsPayload,
+          );
+          if (!requestPayload) {
             sendText(response, 400, "Invalid writing-tools copy");
             return;
           }
-          writeDurableWritingTools(payload);
-          sendText(response, 200, "Writing tools synced in Documents");
+          const current = readDurableWritingTools();
+          const reconciled = reconcileWritingToolsPayload({
+            current,
+            incoming: requestPayload.payload,
+            base: requestPayload.base,
+            deviceName,
+          });
+          writeDurableWritingTools(reconciled.payload);
+          const conflictFile = writeConflictArchive({
+            root: writingToolsConflictsRoot,
+            prefix: "writing-tools",
+            base: requestPayload.base,
+            current,
+            incoming: requestPayload.payload,
+            merged: reconciled.payload,
+            conflicts: reconciled.conflicts,
+          });
+          sendJson(response, 200, {
+            payload: reconciled.payload,
+            conflictCount: reconciled.conflicts.length,
+            conflictFile,
+            message:
+              reconciled.conflicts.length > 0
+                ? "Writing-tool changes were merged; uncertain edits were preserved."
+                : "Writing tools synced in Documents.",
+          });
         } catch {
           sendText(response, 400, "Invalid writing-tools copy");
         }
@@ -780,13 +927,38 @@ const server = createServer((request, response) => {
       request.on("end", () => {
         if (rejected) return;
         try {
-          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          if (!isTemplatePayload(payload)) {
+          const received = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          const requestPayload = readVaultRequest(received, isTemplatePayload);
+          if (!requestPayload) {
             sendText(response, 400, "Invalid template backup");
             return;
           }
-          writeDurableTemplates(payload);
-          sendText(response, 200, "Templates protected in Documents");
+          const current = readDurableTemplates();
+          const reconciled = reconcileTemplatePayload({
+            current,
+            incoming: requestPayload.payload,
+            base: requestPayload.base,
+            deviceName,
+          });
+          writeDurableTemplates(reconciled.payload);
+          const conflictFile = writeConflictArchive({
+            root: templateConflictsRoot,
+            prefix: "templates",
+            base: requestPayload.base,
+            current,
+            incoming: requestPayload.payload,
+            merged: reconciled.payload,
+            conflicts: reconciled.conflicts,
+          });
+          sendJson(response, 200, {
+            payload: reconciled.payload,
+            conflictCount: reconciled.conflicts.length,
+            conflictFile,
+            message:
+              reconciled.conflicts.length > 0
+                ? "Template changes were merged; uncertain edits were preserved."
+                : "Templates protected in Documents.",
+          });
         } catch {
           sendText(response, 400, "Invalid template backup");
         }

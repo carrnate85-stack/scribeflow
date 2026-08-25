@@ -15,6 +15,10 @@ $checksumAssetName = "$assetName.sha256"
 $versionFile = Join-Path $projectRoot "app-version.json"
 $settingsRoot = Join-Path $env:LOCALAPPDATA "ScribeFlow"
 $updatesRoot = Join-Path $settingsRoot "updates"
+$runtimeRoot = Join-Path $settingsRoot "runtime"
+$updateStatusPath = Join-Path $runtimeRoot "update-status.json"
+$updateLogPath = Join-Path $runtimeRoot "update.log"
+$script:targetVersion = $null
 
 function ConvertTo-ScribeFlowVersion {
     param([string]$Value)
@@ -38,6 +42,44 @@ function Assert-SafeUpdatePath {
     ) {
         throw "The updater refused an unsafe working path."
     }
+}
+
+function Write-ScribeFlowUpdateLog {
+    param([string]$Message)
+
+    New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+    if (
+        (Test-Path -LiteralPath $updateLogPath) -and
+        (Get-Item -LiteralPath $updateLogPath).Length -gt 1MB
+    ) {
+        Move-Item -LiteralPath $updateLogPath `
+            -Destination "$updateLogPath.previous" -Force
+    }
+    Add-Content -LiteralPath $updateLogPath -Value (
+        "[{0}] {1}" -f (Get-Date).ToString("o"), $Message
+    ) -Encoding UTF8
+}
+
+function Set-ScribeFlowUpdateStatus {
+    param(
+        [string]$Stage,
+        [string]$Message,
+        [string]$Version = ""
+    )
+
+    New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+    $temporaryPath = "$updateStatusPath.new"
+    [ordered]@{
+        stage = $Stage
+        version = $Version
+        message = $Message
+        updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+        logPath = $updateLogPath
+    } |
+        ConvertTo-Json |
+        Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -LiteralPath $temporaryPath -Destination $updateStatusPath -Force
+    Write-ScribeFlowUpdateLog -Message "$Stage`: $Message"
 }
 
 function Invoke-ScribeFlowDownload {
@@ -64,6 +106,10 @@ function Invoke-ScribeFlowDownload {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Invoke-ScribeFlowUpdate {
+Set-ScribeFlowUpdateStatus -Stage "checking" `
+    -Message "Checking GitHub for a ScribeFlow update."
+
 $currentVersion = [version]"0.0.0"
 if (Test-Path -LiteralPath $versionFile) {
     try {
@@ -89,6 +135,8 @@ try {
 catch {
     Write-Host "ScribeFlow update check skipped; GitHub is unavailable." `
         -ForegroundColor DarkGray
+    Set-ScribeFlowUpdateStatus -Stage "offline" `
+        -Message "GitHub was unavailable; ScribeFlow opened normally."
     return
 }
 
@@ -96,8 +144,12 @@ $latestVersion = ConvertTo-ScribeFlowVersion -Value ([string]$release.tag_name)
 if (-not $Force -and $latestVersion -le $currentVersion) {
     Write-Host "ScribeFlow is up to date ($currentVersion)." `
         -ForegroundColor DarkGray
+    Set-ScribeFlowUpdateStatus -Stage "current" `
+        -Version ([string]$currentVersion) `
+        -Message "ScribeFlow is up to date."
     return
 }
+$script:targetVersion = [string]$latestVersion
 
 $archiveAsset = $release.assets |
     Where-Object { $_.name -eq $assetName } |
@@ -110,6 +162,9 @@ if (-not $archiveAsset -or -not $checksumAsset) {
 }
 
 Write-Host "ScribeFlow $latestVersion is available." -ForegroundColor Cyan
+Set-ScribeFlowUpdateStatus -Stage "available" `
+    -Version ([string]$latestVersion) `
+    -Message "ScribeFlow $latestVersion is available."
 if ($CheckOnly) {
     return
 }
@@ -129,6 +184,9 @@ if (Test-Path -LiteralPath $releaseRoot) {
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 
 Write-Host "Downloading the verified ScribeFlow update..." -ForegroundColor Cyan
+Set-ScribeFlowUpdateStatus -Stage "downloading" `
+    -Version ([string]$latestVersion) `
+    -Message "Downloading ScribeFlow $latestVersion."
 if (-not (Invoke-ScribeFlowDownload `
     -Url ([string]$checksumAsset.browser_download_url) `
     -Destination $checksumPath
@@ -167,6 +225,9 @@ if ($actualSha256 -ne $expectedSha256) {
     throw "The ScribeFlow update checksum did not match."
 }
 Move-Item -LiteralPath $archiveDownload -Destination $archivePath -Force
+Set-ScribeFlowUpdateStatus -Stage "verified" `
+    -Version ([string]$latestVersion) `
+    -Message "The downloaded update passed checksum verification."
 
 Expand-Archive `
     -LiteralPath $archivePath `
@@ -178,13 +239,67 @@ if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
 }
 
 Set-Location -LiteralPath $env:TEMP
-& powershell.exe `
-    -NoProfile `
-    -ExecutionPolicy Bypass `
-    -File $installer `
-    -NoLaunch
-if ($LASTEXITCODE -ne 0) {
+$installed = $false
+$lastInstallerError = ""
+for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+    Set-ScribeFlowUpdateStatus -Stage "installing" `
+        -Version ([string]$latestVersion) `
+        -Message "Installing ScribeFlow $latestVersion (attempt $attempt of 3)."
+    try {
+        & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $installer `
+            -NoLaunch
+        if ($LASTEXITCODE -ne 0) {
+            throw "Installer exited with code $LASTEXITCODE."
+        }
+        $installedVersionFile = Join-Path `
+            $env:LOCALAPPDATA "Programs\ScribeFlow\app-version.json"
+        $installedVersion = [string](
+            (Get-Content -LiteralPath $installedVersionFile -Raw |
+                ConvertFrom-Json).version
+        )
+        if (
+            (ConvertTo-ScribeFlowVersion -Value $installedVersion) -ne
+            $latestVersion
+        ) {
+            throw "Installed version verification failed."
+        }
+        $installed = $true
+        break
+    }
+    catch {
+        $lastInstallerError = $_.Exception.Message
+        Write-ScribeFlowUpdateLog -Message (
+            "Installer attempt $attempt failed: $lastInstallerError"
+        )
+        if ($attempt -lt 3) {
+            Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
+        }
+    }
+}
+if (-not $installed) {
     throw "The ScribeFlow update could not be applied."
 }
 
 Write-Host "ScribeFlow updated to $latestVersion." -ForegroundColor Green
+Set-ScribeFlowUpdateStatus -Stage "installed" `
+    -Version ([string]$latestVersion) `
+    -Message "ScribeFlow $latestVersion was installed successfully."
+}
+
+try {
+    Invoke-ScribeFlowUpdate
+}
+catch {
+    $failedVersion = if ($script:targetVersion) {
+        $script:targetVersion
+    } else {
+        ""
+    }
+    Set-ScribeFlowUpdateStatus -Stage "failed" `
+        -Version $failedVersion `
+        -Message "Update failed after automatic retries: $($_.Exception.Message)"
+    throw
+}
