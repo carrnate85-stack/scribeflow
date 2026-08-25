@@ -1373,7 +1373,6 @@ function collapseRepeatedWhisperPhrases(text: string) {
 export default function Home() {
   const [note, setNote] = useState("");
   const [noteHtml, setNoteHtml] = useState("");
-  const [noteTitle, setNoteTitle] = useState("Untitled encounter");
   const [activePanel, setActivePanel] = useState<
     "quicktext" | "templates" | "vocabulary"
   >("templates");
@@ -3406,7 +3405,6 @@ export default function Home() {
           )
         : undefined,
     );
-    setNoteTitle(template.name);
     setToast(`${template.name} applied`);
     window.requestAnimationFrame(() => noteRef.current?.focus());
   }
@@ -3846,7 +3844,6 @@ export default function Home() {
     stopRecording();
     whisperSessionRef.current += 1;
     setEditorText("");
-    setNoteTitle("Untitled encounter");
     setElapsed(0);
     setPdfMeasurements(null);
     setPdfStatus("Choose a PDF to extract intake and sleep fields");
@@ -4227,18 +4224,6 @@ export default function Home() {
         </aside>
 
         <section className="note-panel">
-          <div className="note-toolbar">
-            <div className="note-identity">
-              <label htmlFor="note-title">Encounter note</label>
-              <input
-                id="note-title"
-                value={noteTitle}
-                onChange={(event) => setNoteTitle(event.target.value)}
-                aria-label="Note title"
-              />
-            </div>
-          </div>
-
           <div className="encounter-strip">
             <span className="encounter-pill">Outpatient</span>
             <span>{new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date())}</span>

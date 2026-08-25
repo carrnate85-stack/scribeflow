@@ -783,44 +783,9 @@ kbd {
   min-width: 0;
   min-height: calc(100vh - 74px);
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(430px, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(430px, 1fr) auto;
   padding-bottom: 154px;
   background: white;
-}
-
-.note-toolbar {
-  min-height: 75px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 13px 28px;
-  border-bottom: 1px solid var(--soft-line);
-}
-
-.note-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.note-identity label {
-  color: #7a8681;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.note-identity input {
-  width: min(420px, 40vw);
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 21px;
-  font-weight: 600;
 }
 
 .note-actions {
@@ -2049,18 +2014,8 @@ kbd {
 
   .note-panel {
     min-height: calc(100vh - 190px);
-    grid-template-rows: auto auto auto auto minmax(400px, 1fr) auto;
+    grid-template-rows: auto auto auto minmax(400px, 1fr) auto;
     padding-bottom: 122px;
-  }
-
-  .note-toolbar {
-    min-height: 65px;
-    padding: 10px 16px;
-  }
-
-  .note-identity input {
-    width: 45vw;
-    font-size: 18px;
   }
 
   .toolbar-button:first-of-type {

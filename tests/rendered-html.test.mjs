@@ -315,6 +315,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /text\/html/);
   assert.doesNotMatch(page, />\s*Use template\s*</);
   assert.doesNotMatch(page, /Save note to Documents/);
+  assert.doesNotMatch(page, /Untitled encounter|Encounter note|Note title/);
   assert.match(page, /handlePdfUpload/);
   assert.match(page, /showOpenFilePicker/);
   assert.match(page, /deletePdfAfterScan, setDeletePdfAfterScan\] = useState\(true\)/);
