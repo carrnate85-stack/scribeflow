@@ -573,11 +573,15 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(styles, /\.whisper-setup-banner/);
   assert.match(
     styles,
-    /\.interim-transcript\s*\{[\s\S]*?position: fixed;[\s\S]*?bottom: 154px;/,
+    /\.interim-transcript\s*\{[\s\S]*?position: fixed;[\s\S]*?bottom: 124px;/,
   );
   assert.match(
     styles,
-    /\.dictation-dock\s*\{[\s\S]*?position: fixed;[\s\S]*?bottom: 16px;/,
+    /\.dictation-dock\s*\{[\s\S]*?width: min\(820px,[\s\S]*?min-height: 96px;[\s\S]*?position: fixed;[\s\S]*?bottom: 12px;/,
+  );
+  assert.match(
+    styles,
+    /\.record-button\s*\{[\s\S]*?width: 54px;[\s\S]*?height: 54px;/,
   );
   assert.match(styles, /\.dictation-dock\.recording/);
   assert.match(page, /aria-label="Persistent dictation controls"/);
