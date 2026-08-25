@@ -585,6 +585,22 @@ test("includes quicktext, template, and local-save workflows", async () => {
   );
   assert.match(styles, /\.dictation-dock\.recording/);
   assert.match(page, /aria-label="Persistent dictation controls"/);
+  assert.match(page, /aria-label="Move dictation controls"/);
+  assert.match(page, /Show full dictation controls/);
+  assert.match(page, /storageKeys\.dictationDockPosition/);
+  assert.match(page, /Microphone returned beside the ScribeFlow name/);
+  assert.match(
+    styles,
+    /\.dictation-dock\.collapsed:not\(\.custom-position\)[\s\S]*?top: 8px;[\s\S]*?left: 180px;/,
+  );
+  assert.match(page, /const startMicrophoneTest = useCallback/);
+  assert.match(page, /getByteTimeDomainData/);
+  assert.match(page, /Speak normally for a few seconds/);
+  assert.match(page, /aria-label="Open system check"/);
+  assert.match(page, /id="system-check-title">System check/);
+  assert.match(page, /Version \{packageInfo\.version\}/);
+  assert.match(page, /No note text or patient data is included in this check/);
+  assert.match(packageJson, /"version": "0\.1\.18"/);
 });
 
 test("extracts past medical history only through the next section", async () => {

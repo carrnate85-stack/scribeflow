@@ -4,6 +4,7 @@ import {
   ChangeEvent,
   FormEvent,
   KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -12,6 +13,7 @@ import {
 } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import packageInfo from "../package.json";
 
 type Template = {
   id: string;
@@ -102,6 +104,18 @@ type MicrophoneOption = {
   deviceId: string;
   label: string;
 };
+
+type DockPosition = {
+  x: number;
+  y: number;
+};
+
+type MicrophoneTestState =
+  | "idle"
+  | "testing"
+  | "heard"
+  | "quiet"
+  | "failed";
 
 type WhisperWorkerResponse =
   | {
@@ -409,6 +423,8 @@ const storageKeys = {
   speechPackReady: "scribe-speech-pack-ready-v1",
   dictationEngine: "scribe-dictation-engine-v1",
   microphoneId: "scribe-microphone-id-v1",
+  dictationDockCollapsed: "scribe-dictation-dock-collapsed-v1",
+  dictationDockPosition: "scribe-dictation-dock-position-v1",
 };
 
 const legacyPatientDataStorageKeys = [
@@ -416,6 +432,17 @@ const legacyPatientDataStorageKeys = [
   "scribe-note-html-v1",
   "scribe-title-v1",
 ];
+
+function parseDockPosition(value: string | null): DockPosition | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<DockPosition>;
+    if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
+    return { x: Number(parsed.x), y: Number(parsed.y) };
+  } catch {
+    return null;
+  }
+}
 
 function parseStoredTemplates(value: string | null): Template[] | null {
   if (!value) return null;
@@ -1392,6 +1419,8 @@ export default function Home() {
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const [syncConflictNotice, setSyncConflictNotice] = useState("");
   const [showSyncDashboard, setShowSyncDashboard] = useState(false);
+  const [showSystemCheck, setShowSystemCheck] = useState(false);
+  const [systemCheckRefreshing, setSystemCheckRefreshing] = useState(false);
   const [pdfMeasurements, setPdfMeasurements] =
     useState<PdfMeasurements | null>(null);
   const [pdfStatus, setPdfStatus] = useState(
@@ -1412,6 +1441,16 @@ export default function Home() {
     useState<DictationEngine>("whisper");
   const [microphones, setMicrophones] = useState<MicrophoneOption[]>([]);
   const [selectedMicrophoneId, setSelectedMicrophoneId] = useState("default");
+  const [dockCollapsed, setDockCollapsed] = useState(true);
+  const [dockPosition, setDockPosition] = useState<DockPosition | null>(null);
+  const hasCustomDockPosition = dockPosition !== null;
+  const [dockDragging, setDockDragging] = useState(false);
+  const [microphoneTestState, setMicrophoneTestState] =
+    useState<MicrophoneTestState>("idle");
+  const [microphoneLevel, setMicrophoneLevel] = useState(0);
+  const [microphoneTestMessage, setMicrophoneTestMessage] = useState(
+    "Test your microphone before dictating",
+  );
   const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState("Ready");
   const [toast, setToast] = useState("");
@@ -1485,6 +1524,20 @@ export default function Home() {
   const templateSelectionRef = useRef<Range | null>(null);
   const interimTranscriptRef = useRef("");
   const shouldRestartRef = useRef(false);
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  const dockDragRef = useRef<{
+    offsetX: number;
+    offsetY: number;
+    latest: DockPosition;
+  } | null>(null);
+  const microphoneTestStreamRef = useRef<MediaStream | null>(null);
+  const microphoneTestContextRef = useRef<AudioContext | null>(null);
+  const microphoneTestSourceRef =
+    useRef<MediaStreamAudioSourceNode | null>(null);
+  const microphoneTestAnimationRef = useRef<number | null>(null);
+  const microphoneTestTimerRef = useRef<number | null>(null);
+  const microphoneTestPeakRef = useRef(0);
+  const microphoneTestSessionRef = useRef(0);
 
   useEffect(() => {
     if (!showTemplateForm) return;
@@ -2079,6 +2132,136 @@ export default function Home() {
     }
   }, []);
 
+  const releaseMicrophoneTest = useCallback(() => {
+    if (microphoneTestAnimationRef.current !== null) {
+      window.cancelAnimationFrame(microphoneTestAnimationRef.current);
+      microphoneTestAnimationRef.current = null;
+    }
+    if (microphoneTestTimerRef.current !== null) {
+      window.clearTimeout(microphoneTestTimerRef.current);
+      microphoneTestTimerRef.current = null;
+    }
+    microphoneTestSourceRef.current?.disconnect();
+    microphoneTestSourceRef.current = null;
+    microphoneTestStreamRef.current
+      ?.getTracks()
+      .forEach((track) => track.stop());
+    microphoneTestStreamRef.current = null;
+    void microphoneTestContextRef.current?.close();
+    microphoneTestContextRef.current = null;
+  }, []);
+
+  const stopMicrophoneTest = useCallback(
+    (showResult = true) => {
+      const heardSpeech = microphoneTestPeakRef.current >= 8;
+      microphoneTestSessionRef.current += 1;
+      releaseMicrophoneTest();
+      setMicrophoneLevel(0);
+      if (!showResult) {
+        setMicrophoneTestState("idle");
+        setMicrophoneTestMessage("Test your microphone before dictating");
+        return;
+      }
+      setMicrophoneTestState(heardSpeech ? "heard" : "quiet");
+      setMicrophoneTestMessage(
+        heardSpeech
+          ? "Microphone is working"
+          : "No clear sound detected — check the selected microphone",
+      );
+    },
+    [releaseMicrophoneTest],
+  );
+
+  const startMicrophoneTest = useCallback(async () => {
+    if (isRecording) {
+      setToast("Stop dictation before testing the microphone");
+      return;
+    }
+    releaseMicrophoneTest();
+    const testSession = ++microphoneTestSessionRef.current;
+    microphoneTestPeakRef.current = 0;
+    setMicrophoneLevel(0);
+    setMicrophoneTestState("testing");
+    setMicrophoneTestMessage("Speak normally for a few seconds");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          deviceId:
+            selectedMicrophoneId === "default"
+              ? undefined
+              : { exact: selectedMicrophoneId },
+        },
+        video: false,
+      });
+      if (testSession !== microphoneTestSessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      await refreshMicrophones();
+      const audioContext = new AudioContext();
+      await audioContext.resume();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.72;
+      source.connect(analyser);
+      microphoneTestStreamRef.current = stream;
+      microphoneTestContextRef.current = audioContext;
+      microphoneTestSourceRef.current = source;
+      const levels = new Uint8Array(analyser.fftSize);
+      const updateLevel = () => {
+        analyser.getByteTimeDomainData(levels);
+        let energy = 0;
+        levels.forEach((sample) => {
+          const centered = (sample - 128) / 128;
+          energy += centered * centered;
+        });
+        const rms = Math.sqrt(energy / levels.length);
+        const level = Math.min(100, Math.round(rms * 360));
+        microphoneTestPeakRef.current = Math.max(
+          microphoneTestPeakRef.current,
+          level,
+        );
+        setMicrophoneLevel(level);
+        microphoneTestAnimationRef.current =
+          window.requestAnimationFrame(updateLevel);
+      };
+      updateLevel();
+      microphoneTestTimerRef.current = window.setTimeout(
+        () => stopMicrophoneTest(true),
+        8000,
+      );
+    } catch (error) {
+      if (testSession !== microphoneTestSessionRef.current) return;
+      releaseMicrophoneTest();
+      setMicrophoneLevel(0);
+      setMicrophoneTestState("failed");
+      setMicrophoneTestMessage(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Allow microphone access, then test again"
+          : "Microphone test could not start",
+      );
+    }
+  }, [
+    isRecording,
+    refreshMicrophones,
+    releaseMicrophoneTest,
+    selectedMicrophoneId,
+    stopMicrophoneTest,
+  ]);
+
+  useEffect(
+    () => () => {
+      microphoneTestSessionRef.current += 1;
+      releaseMicrophoneTest();
+    },
+    [releaseMicrophoneTest],
+  );
+
   const persistTemplatesToDisk = useCallback(
     async (payload: TemplateVaultPayload) => {
       const response = await fetch(
@@ -2142,6 +2325,12 @@ export default function Home() {
     );
     const storedMicrophoneId = window.localStorage.getItem(
       storageKeys.microphoneId,
+    );
+    const storedDockCollapsed = window.localStorage.getItem(
+      storageKeys.dictationDockCollapsed,
+    );
+    const storedDockPosition = parseDockPosition(
+      window.localStorage.getItem(storageKeys.dictationDockPosition),
     );
     const browserTemplates =
       parseStoredTemplates(storedTemplates) ||
@@ -2363,6 +2552,10 @@ export default function Home() {
     if (storedMicrophoneId) {
       setSelectedMicrophoneId(storedMicrophoneId);
     }
+    if (storedDockCollapsed === "false") {
+      setDockCollapsed(false);
+    }
+    setDockPosition(storedDockPosition);
     void refreshMicrophones();
   }, [persistTemplatesToDisk, persistWritingToolsToDisk, refreshMicrophones]);
 
@@ -3278,9 +3471,18 @@ export default function Home() {
   }, [dictationEngine, stopChromeRecording, stopWhisperRecording]);
 
   const startRecording = useCallback(() => {
+    if (microphoneTestState === "testing") {
+      stopMicrophoneTest(false);
+    }
     if (dictationEngine === "whisper") void startWhisperRecording();
     else void startChromeRecording();
-  }, [dictationEngine, startChromeRecording, startWhisperRecording]);
+  }, [
+    dictationEngine,
+    microphoneTestState,
+    startChromeRecording,
+    startWhisperRecording,
+    stopMicrophoneTest,
+  ]);
 
   const toggleRecording = useCallback(() => {
     if (isRecording) stopRecording();
@@ -3872,6 +4074,7 @@ export default function Home() {
   function changeDictationEngine(event: ChangeEvent<HTMLSelectElement>) {
     const nextEngine = event.currentTarget.value as DictationEngine;
     if (nextEngine !== "whisper" && nextEngine !== "chrome") return;
+    stopMicrophoneTest(false);
     setDictationEngine(nextEngine);
     window.localStorage.setItem(storageKeys.dictationEngine, nextEngine);
     setStatus(
@@ -3885,6 +4088,7 @@ export default function Home() {
 
   function changeMicrophone(event: ChangeEvent<HTMLSelectElement>) {
     const microphoneId = event.currentTarget.value;
+    stopMicrophoneTest(false);
     setSelectedMicrophoneId(microphoneId);
     window.localStorage.setItem(storageKeys.microphoneId, microphoneId);
     const selectedMicrophone = microphones.find(
@@ -3897,11 +4101,149 @@ export default function Home() {
     );
   }
 
+  const clampDockPosition = useCallback((position: DockPosition) => {
+    const dock = dockRef.current;
+    const width = dock?.offsetWidth || (dockCollapsed ? 154 : 820);
+    const height = dock?.offsetHeight || (dockCollapsed ? 68 : 100);
+    return {
+      x: Math.max(8, Math.min(position.x, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(position.y, window.innerHeight - height - 8)),
+    };
+  }, [dockCollapsed]);
+
+  function beginDockDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    const dock = dockRef.current;
+    if (!dock) return;
+    const rectangle = dock.getBoundingClientRect();
+    const startingPosition = {
+      x: rectangle.left,
+      y: rectangle.top,
+    };
+    dockDragRef.current = {
+      offsetX: event.clientX - rectangle.left,
+      offsetY: event.clientY - rectangle.top,
+      latest: startingPosition,
+    };
+    setDockPosition(startingPosition);
+    setDockDragging(true);
+    event.preventDefault();
+  }
+
+  useEffect(() => {
+    if (!dockDragging) return;
+    const moveDock = (event: PointerEvent) => {
+      const drag = dockDragRef.current;
+      if (!drag) return;
+      const next = clampDockPosition({
+        x: event.clientX - drag.offsetX,
+        y: event.clientY - drag.offsetY,
+      });
+      drag.latest = next;
+      setDockPosition(next);
+    };
+    const finishDockDrag = () => {
+      const finalPosition = dockDragRef.current?.latest;
+      dockDragRef.current = null;
+      setDockDragging(false);
+      if (finalPosition) {
+        window.localStorage.setItem(
+          storageKeys.dictationDockPosition,
+          JSON.stringify(finalPosition),
+        );
+      }
+    };
+    window.addEventListener("pointermove", moveDock);
+    window.addEventListener("pointerup", finishDockDrag, { once: true });
+    window.addEventListener("pointercancel", finishDockDrag, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", moveDock);
+      window.removeEventListener("pointerup", finishDockDrag);
+      window.removeEventListener("pointercancel", finishDockDrag);
+    };
+  }, [clampDockPosition, dockDragging]);
+
+  useEffect(() => {
+    if (!hasCustomDockPosition) return;
+    const keepDockVisible = () => {
+      setDockPosition((current) => {
+        if (!current) return current;
+        const next = clampDockPosition(current);
+        if (next.x === current.x && next.y === current.y) return current;
+        window.localStorage.setItem(
+          storageKeys.dictationDockPosition,
+          JSON.stringify(next),
+        );
+        return next;
+      });
+    };
+    const frame = window.requestAnimationFrame(keepDockVisible);
+    window.addEventListener("resize", keepDockVisible);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", keepDockVisible);
+    };
+  }, [clampDockPosition, dockCollapsed, hasCustomDockPosition]);
+
+  function toggleDockCollapsed() {
+    const next = !dockCollapsed;
+    setDockCollapsed(next);
+    window.localStorage.setItem(
+      storageKeys.dictationDockCollapsed,
+      String(next),
+    );
+  }
+
+  function resetDockPosition() {
+    setDockPosition(null);
+    setDockCollapsed(true);
+    window.localStorage.removeItem(storageKeys.dictationDockPosition);
+    window.localStorage.setItem(storageKeys.dictationDockCollapsed, "true");
+    setToast("Microphone returned beside the ScribeFlow name");
+  }
+
+  const refreshSystemCheck = useCallback(async () => {
+    setSystemCheckRefreshing(true);
+    try {
+      await Promise.all([
+        refreshWhisperInstallStatus(),
+        refreshMicrophones(),
+        refreshSharedLibraryRef.current?.(false) ?? Promise.resolve(),
+      ]);
+      setToast("System check refreshed");
+    } finally {
+      setSystemCheckRefreshing(false);
+    }
+  }, [refreshMicrophones, refreshWhisperInstallStatus]);
+
   const wordCount = note.trim() ? note.trim().split(/\s+/).length : 0;
   const activeEngineSupported =
     dictationEngine === "whisper"
       ? whisperSupported && whisperReady
       : speechSupported;
+  const selectedMicrophoneLabel =
+    selectedMicrophoneId === "default"
+      ? "System default"
+      : microphones.find(
+          (microphone) => microphone.deviceId === selectedMicrophoneId,
+        )?.label || "Selected microphone";
+  const sharedLibraryReady = Boolean(
+    sharedStorageStatus?.templates.exists &&
+      sharedStorageStatus.writingTools.exists,
+  );
+  const systemIssueCount =
+    (whisperInstallStatus.installed ? 0 : 1) +
+    (microphones.length > 0 ? 0 : 1) +
+    (sharedStorageStatus?.oneDrive ? 0 : 1) +
+    (sharedLibraryReady ? 0 : 1);
+  const dockStyle = dockPosition
+    ? {
+        left: `${dockPosition.x}px`,
+        top: `${dockPosition.y}px`,
+        bottom: "auto",
+        transform: "none",
+      }
+    : undefined;
 
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -3930,6 +4272,26 @@ export default function Home() {
           Local only — nothing leaves this device
         </div>
         <div className="top-actions">
+          <button
+            className={`sync-status-button system-status-button ${
+              systemIssueCount > 0 ? "has-attention" : ""
+            }`}
+            type="button"
+            onClick={() => {
+              setShowSystemCheck(true);
+              void refreshSystemCheck();
+            }}
+            aria-haspopup="dialog"
+            aria-label="Open system check"
+          >
+            <span className="system-status-icon" aria-hidden="true">
+              {systemIssueCount > 0 ? "!" : "✓"}
+            </span>
+            <span>
+              <strong>System check</strong>
+              <small>{systemIssueCount > 0 ? "Needs attention" : "Ready"}</small>
+            </span>
+          </button>
           <button
             className={`sync-status-button ${
               sharedStorageStatus &&
@@ -4417,119 +4779,206 @@ export default function Home() {
           </div>
 
           <div
-            className={`dictation-dock ${isRecording ? "recording" : ""}`}
+            ref={dockRef}
+            className={`dictation-dock ${isRecording ? "recording" : ""} ${
+              dockCollapsed ? "collapsed" : "expanded"
+            } ${dockPosition ? "custom-position" : ""} ${
+              dockDragging ? "dragging" : ""
+            }`}
+            style={dockStyle}
             aria-label="Persistent dictation controls"
           >
-            <div className="dictation-state">
-              <span className="status-dot" aria-hidden="true" />
-              <div>
-                <strong>{status}</strong>
-                <span>
-                  {isRecording
-                    ? dictationEngine === "whisper"
-                      ? "Audio is processed in memory on this computer"
-                      : "Speak naturally — punctuation is editable"
-                    : activeEngineSupported
-                      ? dictationEngine === "whisper"
-                        ? whisperReady
-                          ? "Whisper Large-v3 unquantized · native CUDA · no API"
-                          : "Connecting to native Large-v3"
-                        : "Chrome offline speech pack"
-                      : "Selected engine is unavailable in this browser"}
-                </span>
-                <label className="dictation-device-picker">
-                  <span>Engine</span>
-                  <select
-                    value={dictationEngine}
-                    onChange={changeDictationEngine}
-                    disabled={isRecording}
-                    aria-label="Dictation engine"
-                  >
-                    <option value="whisper">
-                      Whisper Large-v3 (local)
-                    </option>
-                    <option value="chrome">Chrome offline</option>
-                  </select>
-                </label>
-                <label
-                  className="dictation-device-picker"
-                  title={
-                    dictationEngine === "chrome"
-                      ? "Chrome offline dictation uses the browser or Windows default microphone"
-                      : "Choose the microphone used by local Whisper"
-                  }
-                >
-                  <span>Mic</span>
-                  <select
-                    value={
-                      dictationEngine === "whisper"
-                        ? selectedMicrophoneId
-                        : "default"
-                    }
-                    onChange={changeMicrophone}
-                    disabled={isRecording || dictationEngine === "chrome"}
-                    aria-label="Microphone input"
-                  >
-                    <option value="default">System default</option>
-                    {microphones
-                      .filter(
-                        (microphone) => microphone.deviceId !== "default",
-                      )
-                      .map((microphone) => (
-                        <option
-                          value={microphone.deviceId}
-                          key={microphone.deviceId}
-                        >
-                          {microphone.label}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-            <div className="waveform" aria-hidden="true">
-              {[13, 24, 38, 22, 45, 31, 19, 39, 27, 15].map((height, index) => (
-                <i
-                  key={index}
-                  style={{
-                    height: `${height}px`,
-                    animationDelay: `${index * 80}ms`,
-                  }}
-                />
-              ))}
-            </div>
             <button
-              className="record-button"
+              className="dock-drag-handle"
               type="button"
-              onClick={toggleRecording}
-              aria-pressed={isRecording}
-              aria-label={isRecording ? "Stop dictation" : "Start dictation"}
-              title="Start or stop dictation (`)"
-              disabled={!activeEngineSupported}
+              onPointerDown={beginDockDrag}
+              aria-label="Move dictation controls"
+              title="Drag to move"
             >
-              <span className="mic-shape" aria-hidden="true" />
+              <span aria-hidden="true">•••</span>
             </button>
-            <div className="record-time">
-              <strong>{formatDuration(elapsed)}</strong>
-              <span>
-                <kbd>`</kbd> Start / stop
-              </span>
-              <button
-                className="voice-learning-button"
-                type="button"
-                onClick={openVoiceLearning}
-                disabled={!lastRecognizedPhrase || isRecording}
-                title={
-                  isRecording
-                    ? "Stop dictation before teaching a correction"
-                    : lastRecognizedPhrase
-                      ? `Teach a correction for: ${lastRecognizedPhrase}`
-                      : "Dictate a phrase first"
-                }
-              >
-                Teach last phrase
-              </button>
-            </div>
+            <button
+              className="dock-collapse-button"
+              type="button"
+              onClick={toggleDockCollapsed}
+              aria-expanded={!dockCollapsed}
+              aria-label={
+                dockCollapsed
+                  ? "Show full dictation controls"
+                  : "Collapse dictation controls"
+              }
+              title={dockCollapsed ? "Show controls" : "Collapse controls"}
+            >
+              <span aria-hidden="true">{dockCollapsed ? "＋" : "−"}</span>
+            </button>
+
+            {dockCollapsed ? (
+              <>
+                <button
+                  className="record-button"
+                  type="button"
+                  onClick={toggleRecording}
+                  aria-pressed={isRecording}
+                  aria-label={isRecording ? "Stop dictation" : "Start dictation"}
+                  title="Start or stop dictation (`)"
+                  disabled={!activeEngineSupported}
+                >
+                  <span className="mic-shape" aria-hidden="true" />
+                </button>
+                <div className="collapsed-dictation-info">
+                  <strong>{formatDuration(elapsed)}</strong>
+                  <span>
+                    <i className="status-dot" aria-hidden="true" />
+                    {isRecording
+                      ? "Listening"
+                      : activeEngineSupported
+                        ? "Ready"
+                        : "Setup"}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="dictation-state">
+                  <span className="status-dot" aria-hidden="true" />
+                  <div>
+                    <strong>{status}</strong>
+                    <span>
+                      {isRecording
+                        ? dictationEngine === "whisper"
+                          ? "Audio is processed in memory on this computer"
+                          : "Speak naturally — punctuation is editable"
+                        : activeEngineSupported
+                          ? dictationEngine === "whisper"
+                            ? whisperReady
+                              ? "Whisper Large-v3 unquantized · native CUDA · no API"
+                              : "Connecting to native Large-v3"
+                            : "Chrome offline speech pack"
+                          : "Selected engine is unavailable in this browser"}
+                    </span>
+                    <label className="dictation-device-picker">
+                      <span>Engine</span>
+                      <select
+                        value={dictationEngine}
+                        onChange={changeDictationEngine}
+                        disabled={isRecording}
+                        aria-label="Dictation engine"
+                      >
+                        <option value="whisper">
+                          Whisper Large-v3 (local)
+                        </option>
+                        <option value="chrome">Chrome offline</option>
+                      </select>
+                    </label>
+                    <div
+                      className="dictation-device-picker microphone-picker"
+                      title={
+                        dictationEngine === "chrome"
+                          ? "Chrome offline dictation uses the browser or Windows default microphone"
+                          : "Choose the microphone used by local Whisper"
+                      }
+                    >
+                      <span>Mic</span>
+                      <select
+                        value={
+                          dictationEngine === "whisper"
+                            ? selectedMicrophoneId
+                            : "default"
+                        }
+                        onChange={changeMicrophone}
+                        disabled={isRecording || dictationEngine === "chrome"}
+                        aria-label="Microphone input"
+                      >
+                        <option value="default">System default</option>
+                        {microphones
+                          .filter(
+                            (microphone) => microphone.deviceId !== "default",
+                          )
+                          .map((microphone) => (
+                            <option
+                              value={microphone.deviceId}
+                              key={microphone.deviceId}
+                            >
+                              {microphone.label}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        className="microphone-test-button"
+                        type="button"
+                        onClick={() =>
+                          microphoneTestState === "testing"
+                            ? stopMicrophoneTest(true)
+                            : void startMicrophoneTest()
+                        }
+                        disabled={isRecording}
+                        aria-label={
+                          microphoneTestState === "testing"
+                            ? "Stop microphone test"
+                            : "Test microphone"
+                        }
+                        title="Test microphone"
+                      >
+                        {microphoneTestState === "testing" ? "■" : "Test"}
+                      </button>
+                    </div>
+                    {microphoneTestState !== "idle" && (
+                      <div className={`microphone-test-inline ${microphoneTestState}`}>
+                        <span className="microphone-level" aria-hidden="true">
+                          <i style={{ width: `${microphoneLevel}%` }} />
+                        </span>
+                        <span>{microphoneTestMessage}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="waveform" aria-hidden="true">
+                  {[13, 24, 38, 22, 45, 31, 19, 39, 27, 15].map(
+                    (height, index) => (
+                      <i
+                        key={index}
+                        style={{
+                          height: `${height}px`,
+                          animationDelay: `${index * 80}ms`,
+                        }}
+                      />
+                    ),
+                  )}
+                </div>
+                <button
+                  className="record-button"
+                  type="button"
+                  onClick={toggleRecording}
+                  aria-pressed={isRecording}
+                  aria-label={isRecording ? "Stop dictation" : "Start dictation"}
+                  title="Start or stop dictation (`)"
+                  disabled={!activeEngineSupported}
+                >
+                  <span className="mic-shape" aria-hidden="true" />
+                </button>
+                <div className="record-time">
+                  <strong>{formatDuration(elapsed)}</strong>
+                  <span>
+                    <kbd>`</kbd> Start / stop
+                  </span>
+                  <button
+                    className="voice-learning-button"
+                    type="button"
+                    onClick={openVoiceLearning}
+                    disabled={!lastRecognizedPhrase || isRecording}
+                    title={
+                      isRecording
+                        ? "Stop dictation before teaching a correction"
+                        : lastRecognizedPhrase
+                          ? `Teach a correction for: ${lastRecognizedPhrase}`
+                          : "Dictate a phrase first"
+                    }
+                  >
+                    Teach last phrase
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </section>
       </div>
@@ -4573,6 +5022,166 @@ export default function Home() {
             </div>
           </div>
         )}
+
+      {showSystemCheck && (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            className="modal-card system-check-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="system-check-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">This computer</p>
+                <h2 id="system-check-title">System check</h2>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setShowSystemCheck(false)}
+                aria-label="Close system check"
+              >
+                ×
+              </button>
+            </div>
+            <div className="system-check-summary">
+              <span className={systemIssueCount > 0 ? "attention" : "ready"}>
+                {systemIssueCount > 0 ? "!" : "✓"}
+              </span>
+              <div>
+                <strong>
+                  {systemIssueCount > 0
+                    ? `${systemIssueCount} item${systemIssueCount === 1 ? "" : "s"} need attention`
+                    : "ScribeFlow is ready"}
+                </strong>
+                <small>No note text or patient data is included in this check.</small>
+              </div>
+              <button
+                type="button"
+                onClick={() => void refreshSystemCheck()}
+                disabled={systemCheckRefreshing}
+              >
+                {systemCheckRefreshing ? "Checking..." : "Check again"}
+              </button>
+            </div>
+            <section className="system-check-list" aria-label="System readiness">
+              <div className="system-check-row ready">
+                <span className="system-check-dot" aria-hidden="true">✓</span>
+                <span>
+                  <strong>ScribeFlow</strong>
+                  <small>Version {packageInfo.version}</small>
+                </span>
+                <em>Installed</em>
+              </div>
+              <div
+                className={`system-check-row ${
+                  whisperInstallStatus.installed && whisperReady
+                    ? "ready"
+                    : "attention"
+                }`}
+              >
+                <span className="system-check-dot" aria-hidden="true">
+                  {whisperInstallStatus.installed && whisperReady ? "✓" : "!"}
+                </span>
+                <span>
+                  <strong>Whisper</strong>
+                  <small>
+                    {whisperInstallStatus.installedReleaseVersion
+                      ? `Version ${whisperInstallStatus.installedReleaseVersion}`
+                      : whisperInstallStatus.message}
+                  </small>
+                </span>
+                <em>{whisperReady ? "Ready" : "Needs attention"}</em>
+              </div>
+              <div
+                className={`system-check-row ${
+                  microphones.length > 0 ? "ready" : "attention"
+                }`}
+              >
+                <span className="system-check-dot" aria-hidden="true">
+                  {microphones.length > 0 ? "✓" : "!"}
+                </span>
+                <span>
+                  <strong>Microphone</strong>
+                  <small>{selectedMicrophoneLabel}</small>
+                  <span className="system-microphone-meter">
+                    <i style={{ width: `${microphoneLevel}%` }} />
+                  </span>
+                  <small className={`microphone-test-result ${microphoneTestState}`}>
+                    {microphoneTestMessage}
+                  </small>
+                </span>
+                <button
+                  className="system-row-action"
+                  type="button"
+                  onClick={() =>
+                    microphoneTestState === "testing"
+                      ? stopMicrophoneTest(true)
+                      : void startMicrophoneTest()
+                  }
+                  disabled={isRecording}
+                >
+                  {microphoneTestState === "testing" ? "Stop test" : "Test mic"}
+                </button>
+              </div>
+              <div
+                className={`system-check-row ${
+                  sharedStorageStatus?.oneDrive ? "ready" : "attention"
+                }`}
+              >
+                <span className="system-check-dot" aria-hidden="true">
+                  {sharedStorageStatus?.oneDrive ? "✓" : "!"}
+                </span>
+                <span>
+                  <strong>OneDrive folder</strong>
+                  <small>
+                    {sharedStorageStatus?.documentsRoot ||
+                      "Documents\\ScribeFlow could not be checked"}
+                  </small>
+                </span>
+                <em>{sharedStorageStatus?.oneDrive ? "Available" : "Check folder"}</em>
+              </div>
+              <div
+                className={`system-check-row ${
+                  sharedLibraryReady ? "ready" : "attention"
+                }`}
+              >
+                <span className="system-check-dot" aria-hidden="true">
+                  {sharedLibraryReady ? "✓" : "!"}
+                </span>
+                <span>
+                  <strong>Shared library</strong>
+                  <small>
+                    {templates.length} templates · {quicktexts.length} quicktext ·{" "}
+                    {vocabulary.length} vocabulary entries
+                  </small>
+                </span>
+                <em>{sharedLibraryReady ? "Ready" : "Check sync"}</em>
+              </div>
+              <div className="system-check-row ready">
+                <span className="system-check-dot" aria-hidden="true">✓</span>
+                <span>
+                  <strong>App updates</strong>
+                  <small>
+                    {sharedStorageStatus?.update?.message ||
+                      "Updates are checked when ScribeFlow opens"}
+                  </small>
+                </span>
+                <em>{sharedStorageStatus?.update?.stage || "Automatic"}</em>
+              </div>
+            </section>
+            <div className="system-check-footer">
+              <span>
+                Microphone position: {dockPosition ? "Custom" : "Beside ScribeFlow"}
+              </span>
+              <button type="button" onClick={resetDockPosition}>
+                Reset position
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSyncDashboard && (
         <div className="modal-backdrop" role="presentation">
