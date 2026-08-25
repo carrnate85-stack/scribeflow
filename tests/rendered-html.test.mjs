@@ -450,6 +450,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
     /url\.pathname === "\/config\/writing-tools"/,
   );
   assert.match(localModelServer, /url\.pathname === "\/config\/status"/);
+  assert.match(
+    localModelServer,
+    /readFileSync\(path, "utf8"\)\.replace\(\/\^\\uFEFF\//,
+  );
   assert.match(localModelServer, /writeConflictArchive/);
   assert.match(localModelServer, /reconcileTemplatePayload/);
   assert.match(localModelServer, /reconcileWritingToolsPayload/);
