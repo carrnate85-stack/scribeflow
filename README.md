@@ -132,7 +132,10 @@ uploaded to the service or retained.
 Notes remain in memory and are copied to the clipboard when requested; the
 note editor does not save them to app storage. Microphone samples, parsed PDF
 values, and PDFs are not written to app storage or transmitted. Audio samples
-are cleared after local transcription.
+are cleared after local transcription. ScribeFlow marks a changed note as
+**Not copied**, confirms when it has been copied, and warns before an uncopied
+note is discarded by starting over, replacing it with a template, refreshing,
+or closing the page.
 
 Templates and up to 20 timestamped recovery copies are protected under
 `OneDrive\Documents\ScribeFlow\Templates`, so they can follow the signed-in
@@ -156,7 +159,9 @@ Templates, Quicktext, and vocabulary all use the single
 `OneDrive\Documents\ScribeFlow` root; no second local Documents path is used
 when OneDrive is available. The selected dictation engine and microphone remain
 local to each PC. Do not place patient identifiers in reusable configuration
-items.
+items. Status wording such as **Saved in OneDrive folder** confirms the local
+file write only; Microsoft OneDrive controls and reports the separate cloud
+upload state.
 
 Only use OneDrive for protected health information when that account and your
 organization's configuration are approved for that purpose.
