@@ -141,6 +141,54 @@ button:disabled {
   gap: 10px;
 }
 
+.sync-status-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 11px;
+  border: 1px solid #d5e3dc;
+  border-radius: 10px;
+  color: #3e5149;
+  background: #f7faf8;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sync-status-button:hover {
+  border-color: #abc8ba;
+  background: var(--forest-soft);
+}
+
+.sync-status-button > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sync-status-button strong {
+  font-size: 10px;
+}
+
+.sync-status-button small {
+  color: #73827b;
+  font-size: 8px;
+}
+
+.sync-status-icon {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #4b9b75;
+  box-shadow: 0 0 0 3px #e3f1ea;
+}
+
+.sync-status-button.has-conflicts .sync-status-icon {
+  background: #c69135;
+  box-shadow: 0 0 0 3px #faefd9;
+}
+
 .whisper-setup-banner {
   width: min(1540px, 100%);
   min-height: 70px;
@@ -426,11 +474,20 @@ kbd {
 .sync-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid #d8e4de;
   border-radius: 11px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.sync-modal {
+  width: min(560px, 100%);
+}
+
+.sync-modal .sync-dashboard {
+  margin-top: 20px;
+  background: #f9fbfa;
 }
 
 .sync-dashboard-heading,
@@ -455,14 +512,14 @@ kbd {
 .sync-dashboard-heading strong,
 .sync-dashboard-row strong {
   color: #405047;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .sync-dashboard-heading small,
 .sync-dashboard-row small {
   overflow: hidden;
   color: #84908a;
-  font-size: 8px;
+  font-size: 10px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -475,7 +532,7 @@ kbd {
   color: var(--forest);
   background: white;
   cursor: pointer;
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 800;
 }
 
@@ -485,23 +542,23 @@ kbd {
 }
 
 .sync-dashboard-row {
-  grid-template-columns: 7px minmax(0, 1fr) auto;
-  padding-top: 6px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  padding-top: 10px;
   border-top: 1px solid #e7eeea;
 }
 
 .sync-dashboard-row em {
-  max-width: 88px;
+  max-width: 150px;
   color: #6f7d76;
-  font-size: 7px;
+  font-size: 9px;
   font-style: normal;
   line-height: 1.25;
   text-align: right;
 }
 
 .sync-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: #4b9b75;
   box-shadow: 0 0 0 2px #e3f1ea;
@@ -513,12 +570,12 @@ kbd {
 }
 
 .sync-conflict-notice {
-  padding: 7px 8px;
+  padding: 9px 10px;
   border: 1px solid #e7c98b;
   border-radius: 7px;
   color: #765a24;
   background: #fff8e8;
-  font-size: 8px;
+  font-size: 10px;
   line-height: 1.4;
 }
 
@@ -726,44 +783,9 @@ kbd {
   min-width: 0;
   min-height: calc(100vh - 74px);
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(430px, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(430px, 1fr) auto;
   padding-bottom: 154px;
   background: white;
-}
-
-.note-toolbar {
-  min-height: 75px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 13px 28px;
-  border-bottom: 1px solid var(--soft-line);
-}
-
-.note-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.note-identity label {
-  color: #7a8681;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.note-identity input {
-  width: min(420px, 40vw);
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 21px;
-  font-weight: 600;
 }
 
 .note-actions {
@@ -1930,6 +1952,16 @@ kbd {
     display: none;
   }
 
+  .sync-status-button {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .sync-status-button > span:last-child {
+    display: none;
+  }
+
   .workspace {
     min-height: calc(100vh - 64px);
     display: block;
@@ -1982,18 +2014,8 @@ kbd {
 
   .note-panel {
     min-height: calc(100vh - 190px);
-    grid-template-rows: auto auto auto auto minmax(400px, 1fr) auto;
+    grid-template-rows: auto auto auto minmax(400px, 1fr) auto;
     padding-bottom: 122px;
-  }
-
-  .note-toolbar {
-    min-height: 65px;
-    padding: 10px 16px;
-  }
-
-  .note-identity input {
-    width: 45vw;
-    font-size: 18px;
   }
 
   .toolbar-button:first-of-type {

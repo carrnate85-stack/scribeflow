@@ -1373,8 +1373,6 @@ function collapseRepeatedWhisperPhrases(text: string) {
 export default function Home() {
   const [note, setNote] = useState("");
   const [noteHtml, setNoteHtml] = useState("");
-  const [noteTitle, setNoteTitle] = useState("Untitled encounter");
-  const [savedNoteName, setSavedNoteName] = useState("");
   const [activePanel, setActivePanel] = useState<
     "quicktext" | "templates" | "vocabulary"
   >("templates");
@@ -1392,6 +1390,7 @@ export default function Home() {
     useState<SharedStorageStatus | null>(null);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const [syncConflictNotice, setSyncConflictNotice] = useState("");
+  const [showSyncDashboard, setShowSyncDashboard] = useState(false);
   const [pdfMeasurements, setPdfMeasurements] =
     useState<PdfMeasurements | null>(null);
   const [pdfStatus, setPdfStatus] = useState(
@@ -1418,7 +1417,6 @@ export default function Home() {
   const [showQuicktextForm, setShowQuicktextForm] = useState(false);
   const [editingQuicktext, setEditingQuicktext] =
     useState<Quicktext | null>(null);
-  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [showVocabularyForm, setShowVocabularyForm] = useState(false);
@@ -1503,7 +1501,6 @@ export default function Home() {
     if (!editor) return;
     setNote(editor.innerText.replace(/\u00a0/g, " "));
     setNoteHtml(editor.innerHTML);
-    setSavedNoteName("");
   }, []);
 
   const rememberSelection = useCallback(() => {
@@ -1684,7 +1681,6 @@ export default function Home() {
     const html = contentHtml || plainTextToHtml(content);
     setNote(content);
     setNoteHtml(html);
-    setSavedNoteName("");
     if (noteRef.current) noteRef.current.innerHTML = html;
     lastSelectionRef.current = null;
     setCurrentToken("");
@@ -3409,8 +3405,6 @@ export default function Home() {
           )
         : undefined,
     );
-    setNoteTitle(template.name);
-    setShowTemplatePicker(false);
     setToast(`${template.name} applied`);
     window.requestAnimationFrame(() => noteRef.current?.focus());
   }
@@ -3843,31 +3837,6 @@ export default function Home() {
     setToast("Note copied to clipboard");
   }
 
-  async function saveNote() {
-    try {
-      const response = await fetch(
-        "http://127.0.0.1:3001/documents/save-note",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: noteTitle,
-            note,
-            noteHtml,
-          }),
-        },
-      );
-      if (!response.ok) {
-        throw new Error("The note could not be saved");
-      }
-      const saved = (await response.json()) as { fileName: string };
-      setSavedNoteName(saved.fileName);
-      setToast(`Saved in Documents\\ScribeFlow\\Notes: ${saved.fileName}`);
-    } catch {
-      setToast("Note was not saved. Keep ScribeFlow open and try again.");
-    }
-  }
-
   function newNote() {
     if (note.trim() && !window.confirm("Start a new note? Your current note will be cleared.")) {
       return;
@@ -3875,7 +3844,6 @@ export default function Home() {
     stopRecording();
     whisperSessionRef.current += 1;
     setEditorText("");
-    setNoteTitle("Untitled encounter");
     setElapsed(0);
     setPdfMeasurements(null);
     setPdfStatus("Choose a PDF to extract intake and sleep fields");
@@ -3939,9 +3907,31 @@ export default function Home() {
         </div>
         <div className="privacy-badge">
           <span className="privacy-dot" aria-hidden="true" />
-          Local-only â€” nothing leaves this device
+          Local only — nothing leaves this device
         </div>
         <div className="top-actions">
+          <button
+            className={`sync-status-button ${
+              sharedStorageStatus &&
+              sharedStorageStatus.templates.conflicts +
+                sharedStorageStatus.writingTools.conflicts >
+                0
+                ? "has-conflicts"
+                : ""
+            }`}
+            type="button"
+            onClick={() => setShowSyncDashboard(true)}
+            aria-haspopup="dialog"
+            aria-label="Open shared library status"
+          >
+            <span className="sync-status-icon" aria-hidden="true" />
+            <span>
+              <strong>Shared library</strong>
+              <small>
+                {sharedStorageStatus?.oneDrive ? "OneDrive ready" : "Check sync"}
+              </small>
+            </span>
+          </button>
           <button className="button subtle" type="button" onClick={newNote}>
             <span aria-hidden="true">＋</span> New note
           </button>
@@ -4088,82 +4078,6 @@ export default function Home() {
             <kbd>⌘K</kbd>
           </label>
 
-          <section className="sync-dashboard" aria-label="OneDrive sync status">
-            <div className="sync-dashboard-heading">
-              <span>
-                <strong>Shared library</strong>
-                <small>
-                  {sharedStorageStatus?.oneDrive
-                    ? `OneDrive on ${sharedStorageStatus.deviceName}`
-                    : "Local Documents fallback"}
-                </small>
-              </span>
-              <button
-                type="button"
-                disabled={syncRefreshing}
-                onClick={() =>
-                  void refreshSharedLibraryRef.current?.(true)
-                }
-              >
-                {syncRefreshing ? "Checking..." : "Sync now"}
-              </button>
-            </div>
-            <div className="sync-dashboard-row">
-              <span className="sync-dot" aria-hidden="true" />
-              <span>
-                <strong>Templates</strong>
-                <small>
-                  {formatSyncTime(sharedStorageStatus?.templates.modifiedAt)}
-                  {sharedStorageStatus?.templates.lastWriter
-                    ? ` · ${sharedStorageStatus.templates.lastWriter}`
-                    : ""}
-                </small>
-              </span>
-              <em>{templateStorageStatus}</em>
-            </div>
-            <div className="sync-dashboard-row">
-              <span className="sync-dot" aria-hidden="true" />
-              <span>
-                <strong>Quicktext + vocabulary</strong>
-                <small>
-                  {formatSyncTime(sharedStorageStatus?.writingTools.modifiedAt)}
-                  {sharedStorageStatus?.writingTools.lastWriter
-                    ? ` · ${sharedStorageStatus.writingTools.lastWriter}`
-                    : ""}
-                </small>
-              </span>
-              <em>{writingToolsStorageStatus}</em>
-            </div>
-            {sharedStorageStatus?.update?.message && (
-              <div className="sync-dashboard-row update-row">
-                <span className="sync-dot" aria-hidden="true" />
-                <span>
-                  <strong>App update</strong>
-                  <small>{sharedStorageStatus.update.message}</small>
-                </span>
-                <em>{sharedStorageStatus.update.stage || "Ready"}</em>
-              </div>
-            )}
-            {(syncConflictNotice ||
-              (sharedStorageStatus &&
-                sharedStorageStatus.templates.conflicts +
-                  sharedStorageStatus.writingTools.conflicts >
-                  0)) && (
-              <div className="sync-conflict-notice">
-                {syncConflictNotice ||
-                  "Conflicting edits were preserved in the Conflicts folders."}
-              </div>
-            )}
-            <div className="shared-library-location">
-              Shared folder: <code>OneDrive\Documents\ScribeFlow</code>
-              {sharedStorageStatus && (
-                <span>
-                  Last checked {formatSyncTime(sharedStorageStatus.checkedAt)}
-                </span>
-              )}
-            </div>
-          </section>
-
           <div className="library-list">
             {activePanel === "quicktext" ? (
               <>
@@ -4276,7 +4190,7 @@ export default function Home() {
                         Heard: <code>{item.heard}</code>
                       </span>
                       <span className="vocabulary-arrow" aria-hidden="true">
-                        â†“
+                        ↓
                       </span>
                       <strong>{item.replacement}</strong>
                     </button>
@@ -4310,46 +4224,6 @@ export default function Home() {
         </aside>
 
         <section className="note-panel">
-          <div className="note-toolbar">
-            <div className="note-identity">
-              <label htmlFor="note-title">Encounter note</label>
-              <input
-                id="note-title"
-                value={noteTitle}
-                onChange={(event) => {
-                  setNoteTitle(event.target.value);
-                  setSavedNoteName("");
-                }}
-                aria-label="Note title"
-              />
-            </div>
-            <div className="note-actions">
-              <span className="save-status">
-                <span aria-hidden="true">◉</span>{" "}
-                {savedNoteName
-                  ? "Saved in OneDrive"
-                  : "Not saved · save to OneDrive"}
-              </span>
-              <button
-                className="toolbar-button"
-                type="button"
-                onClick={() => setShowTemplatePicker(true)}
-              >
-                Use template
-              </button>
-              <button
-                className="toolbar-button"
-                type="button"
-                onClick={() => void saveNote()}
-                disabled={!note.trim()}
-                aria-label="Save note to Documents"
-                title="Save note to Documents\ScribeFlow\Notes"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-
           <div className="encounter-strip">
             <span className="encounter-pill">Outpatient</span>
             <span>{new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date())}</span>
@@ -4670,6 +4544,105 @@ export default function Home() {
           </div>
         )}
 
+      {showSyncDashboard && (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            className="modal-card sync-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shared-library-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">OneDrive status</p>
+                <h2 id="shared-library-title">Shared library</h2>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setShowSyncDashboard(false)}
+                aria-label="Close shared library status"
+              >
+                ×
+              </button>
+            </div>
+            <section className="sync-dashboard" aria-label="OneDrive sync status">
+              <div className="sync-dashboard-heading">
+                <span>
+                  <strong>
+                    {sharedStorageStatus?.oneDrive
+                      ? `OneDrive on ${sharedStorageStatus.deviceName}`
+                      : "Local Documents fallback"}
+                  </strong>
+                  <small>Reusable writing tools shared between your PCs</small>
+                </span>
+                <button
+                  type="button"
+                  disabled={syncRefreshing}
+                  onClick={() => void refreshSharedLibraryRef.current?.(true)}
+                >
+                  {syncRefreshing ? "Checking..." : "Sync now"}
+                </button>
+              </div>
+              <div className="sync-dashboard-row">
+                <span className="sync-dot" aria-hidden="true" />
+                <span>
+                  <strong>Templates</strong>
+                  <small>
+                    {formatSyncTime(sharedStorageStatus?.templates.modifiedAt)}
+                    {sharedStorageStatus?.templates.lastWriter
+                      ? ` · ${sharedStorageStatus.templates.lastWriter}`
+                      : ""}
+                  </small>
+                </span>
+                <em>{templateStorageStatus}</em>
+              </div>
+              <div className="sync-dashboard-row">
+                <span className="sync-dot" aria-hidden="true" />
+                <span>
+                  <strong>Quicktext + vocabulary</strong>
+                  <small>
+                    {formatSyncTime(sharedStorageStatus?.writingTools.modifiedAt)}
+                    {sharedStorageStatus?.writingTools.lastWriter
+                      ? ` · ${sharedStorageStatus.writingTools.lastWriter}`
+                      : ""}
+                  </small>
+                </span>
+                <em>{writingToolsStorageStatus}</em>
+              </div>
+              {sharedStorageStatus?.update?.message && (
+                <div className="sync-dashboard-row update-row">
+                  <span className="sync-dot" aria-hidden="true" />
+                  <span>
+                    <strong>App update</strong>
+                    <small>{sharedStorageStatus.update.message}</small>
+                  </span>
+                  <em>{sharedStorageStatus.update.stage || "Ready"}</em>
+                </div>
+              )}
+              {(syncConflictNotice ||
+                (sharedStorageStatus &&
+                  sharedStorageStatus.templates.conflicts +
+                    sharedStorageStatus.writingTools.conflicts >
+                    0)) && (
+                <div className="sync-conflict-notice">
+                  {syncConflictNotice ||
+                    "Conflicting edits were preserved in the Conflicts folders."}
+                </div>
+              )}
+              <div className="shared-library-location">
+                Shared folder: <code>OneDrive\Documents\ScribeFlow</code>
+                {sharedStorageStatus && (
+                  <span>
+                    Last checked {formatSyncTime(sharedStorageStatus.checkedAt)}
+                  </span>
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
       {showHstPaste && (
         <div className="modal-backdrop" role="presentation">
           <form
@@ -4846,7 +4819,7 @@ export default function Home() {
                 }}
                 aria-label="Close"
               >
-                Ã—
+                ×
               </button>
             </div>
             <label>
@@ -4936,7 +4909,7 @@ export default function Home() {
                 }}
                 aria-label="Close"
               >
-                Ã—
+                ×
               </button>
             </div>
             <div className="template-form-fields">
@@ -5065,42 +5038,6 @@ export default function Home() {
               </div>
             </div>
           </form>
-        </div>
-      )}
-
-      {showTemplatePicker && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-card template-modal">
-            <div className="modal-heading">
-              <div>
-                <p className="eyebrow">Structured notes</p>
-                <h2>Choose a template</h2>
-              </div>
-              <button
-                type="button"
-                className="close-button"
-                onClick={() => setShowTemplatePicker(false)}
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-            <div className="template-grid">
-              {templates.map((template) => (
-                <button
-                  key={template.id}
-                  type="button"
-                  onClick={() => applyTemplate(template)}
-                >
-                  <span className="template-glyph" aria-hidden="true">
-                    {template.name.slice(0, 1)}
-                  </span>
-                  <strong>{template.name}</strong>
-                  <span>{template.description}</span>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       )}
 

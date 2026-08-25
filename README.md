@@ -2,8 +2,8 @@
 
 ScribeFlow is a focused, locally processed clinical dictation workspace. It combines
 bundled Whisper speech recognition with an editable note, reusable dot phrases,
-structured clinical templates, in-memory PDF parsing, and copy or OneDrive
-document saving.
+structured clinical templates, in-memory PDF parsing, clipboard copy, and
+OneDrive shared-library synchronization.
 
 PDF templates can use `.pastmedicalhistory` to insert the Past Medical History
 section extracted from an onboarding form.
@@ -32,8 +32,7 @@ verification.
 - Type a shortcut such as `.normalexam` followed by Space to expand quicktext.
 - Start from SOAP, follow-up, consultation, or procedure templates.
 - Create personal quicktexts that persist in the browser.
-- Copy the completed note or save it directly to
-  `OneDrive\Documents\ScribeFlow\Notes`.
+- Copy the completed note to the clipboard for use in the destination record.
 
 ## Development
 
@@ -130,10 +129,10 @@ uploaded to the service or retained.
 
 ## Clinical use
 
-Notes remain in memory until **Save** is clicked. Saved notes are written as
-HTML documents under `OneDrive\Documents\ScribeFlow\Notes`. Microphone samples,
-parsed PDF values, and PDFs are not written to app storage or transmitted.
-Audio samples are cleared after local transcription.
+Notes remain in memory and are copied to the clipboard when requested; the
+note editor does not save them to app storage. Microphone samples, parsed PDF
+values, and PDFs are not written to app storage or transmitted. Audio samples
+are cleared after local transcription.
 
 Templates and up to 20 timestamped recovery copies are protected under
 `OneDrive\Documents\ScribeFlow\Templates`, so they can follow the signed-in
@@ -146,9 +145,10 @@ and up to 20 timestamped recovery copies are synced through
 browser Quicktext and vocabulary entries are merged into this shared copy the
 first time the updated app runs on each PC. ScribeFlow checks the same shared
 root every five seconds and whenever its window regains focus, so changes made
-on another PC appear without restarting. The Shared library panel shows the
-last check, last saved time, last-writing PC, update health, conflict count, and
-a **Sync now** control. Writes use a three-way merge: unrelated changes from
+on another PC appear without restarting. A compact **Shared library** button in
+the top bar opens the full status panel with the last check, last saved time,
+last-writing PC, update health, conflict count, and a **Sync now** control.
+Writes use a three-way merge: unrelated changes from
 two PCs are combined, while competing edits receive a visible conflict copy.
 Full base, local, remote, and merged copies are retained under the corresponding
 local OneDrive `Conflicts` folder instead of silently overwriting data.
