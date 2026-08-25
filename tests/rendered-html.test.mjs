@@ -267,9 +267,14 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /devicechange/);
   assert.match(page, /selectedMicrophoneId/);
   assert.match(page, /deviceId:[\s\S]*?exact: selectedMicrophoneId/);
-  assert.match(page, /aria-label="Microphone input"/);
+  assert.match(page, /aria-label="Top bar microphone selection"/);
+  assert.doesNotMatch(page, /aria-label="Microphone input"/);
   assert.match(page, /System default/);
-  assert.match(page, /Chrome offline dictation uses the browser or Windows default microphone/);
+  assert.match(page, /className="selected-microphone-name"/);
+  assert.match(
+    page,
+    /className="topbar-microphone-picker"[\s\S]*?aria-label="Top bar microphone selection"[\s\S]*?className=\{`sync-status-button system-status-button/,
+  );
   assert.match(page, /saveVocabularyItem/);
   assert.match(page, /lastRecognizedPhrase/);
   assert.match(page, /setLastRecognizedPhrase/);
@@ -600,7 +605,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.18"/);
+  assert.match(packageJson, /"version": "0\.1\.19"/);
 });
 
 test("extracts past medical history only through the next section", async () => {

@@ -63,7 +63,7 @@ button:disabled {
 .topbar {
   height: 74px;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  grid-template-columns: auto minmax(180px, 1fr) auto;
   align-items: center;
   gap: 24px;
   padding: 0 30px;
@@ -114,6 +114,8 @@ button:disabled {
 }
 
 .privacy-badge {
+  justify-self: center;
+  transform: translateX(54px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -139,6 +141,44 @@ button:disabled {
   justify-content: flex-end;
   align-items: center;
   gap: 10px;
+}
+
+.topbar-microphone-picker {
+  width: 130px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid #d5e3dc;
+  border-radius: 10px;
+  color: #617069;
+  background: #f7faf8;
+}
+
+.topbar-microphone-picker > span {
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.topbar-microphone-picker select {
+  min-width: 0;
+  flex: 1;
+  padding: 2px 17px 2px 3px;
+  border: 0;
+  color: var(--forest);
+  background: transparent;
+  font-size: 9px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.topbar-microphone-picker select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .copy-status {
@@ -1712,8 +1752,18 @@ kbd {
   cursor: not-allowed;
 }
 
-.microphone-picker select {
+.microphone-test-picker {
+  min-width: 0;
+}
+
+.selected-microphone-name {
   width: 82px;
+  overflow: hidden;
+  color: #68766f;
+  font-size: 7px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .microphone-test-button {
@@ -2229,7 +2279,7 @@ kbd {
   }
 }
 
-@media (max-width: 950px) {
+@media (max-width: 1120px) {
   .topbar {
     grid-template-columns: 1fr auto;
   }
@@ -2237,6 +2287,9 @@ kbd {
   .privacy-badge {
     display: none;
   }
+}
+
+@media (max-width: 950px) {
 
   .workspace {
     grid-template-columns: 280px minmax(0, 1fr);
@@ -2273,6 +2326,20 @@ kbd {
 
   .sync-status-button > span:last-child {
     display: none;
+  }
+
+  .topbar-microphone-picker {
+    width: 92px;
+    padding: 5px 6px;
+  }
+
+  .topbar-microphone-picker > span {
+    display: none;
+  }
+
+  .topbar-microphone-picker select {
+    width: 100%;
+    font-size: 8px;
   }
 
   .copy-status {
@@ -2448,7 +2515,7 @@ kbd {
     width: 138px;
   }
 
-  .microphone-picker select {
+  .selected-microphone-name {
     width: 96px;
   }
 
