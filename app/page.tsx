@@ -1373,6 +1373,7 @@ function collapseRepeatedWhisperPhrases(text: string) {
 export default function Home() {
   const [note, setNote] = useState("");
   const [noteHtml, setNoteHtml] = useState("");
+  const [noteCopied, setNoteCopied] = useState(true);
   const [activePanel, setActivePanel] = useState<
     "quicktext" | "templates" | "vocabulary"
   >("templates");
@@ -1501,6 +1502,7 @@ export default function Home() {
     if (!editor) return;
     setNote(editor.innerText.replace(/\u00a0/g, " "));
     setNoteHtml(editor.innerHTML);
+    setNoteCopied(false);
   }, []);
 
   const rememberSelection = useCallback(() => {
@@ -1681,6 +1683,7 @@ export default function Home() {
     const html = contentHtml || plainTextToHtml(content);
     setNote(content);
     setNoteHtml(html);
+    setNoteCopied(!content.trim());
     if (noteRef.current) noteRef.current.innerHTML = html;
     lastSelectionRef.current = null;
     setCurrentToken("");
@@ -2200,7 +2203,7 @@ export default function Home() {
         JSON.stringify(diskPayload.templates) === serializedTemplates;
       if (diskMatches) {
         templateBaseRef.current = selectedPayload;
-        setTemplateStorageStatus("Synced in OneDrive");
+        setTemplateStorageStatus("Saved in OneDrive folder");
       } else {
         try {
           const result = await persistTemplatesToDisk(selectedPayload);
@@ -2223,7 +2226,7 @@ export default function Home() {
           setTemplateStorageStatus(
             result.conflictCount > 0
               ? "Merged safely; conflicts preserved"
-              : "Synced in OneDrive",
+              : "Saved in OneDrive folder",
           );
           if (result.conflictCount > 0) {
             setSyncConflictNotice(result.message);
@@ -2312,7 +2315,7 @@ export default function Home() {
         JSON.stringify(diskPayload.vocabulary) === serializedVocabulary;
       if (diskMatches) {
         writingToolsBaseRef.current = selectedPayload;
-        setWritingToolsStorageStatus("Synced in OneDrive");
+        setWritingToolsStorageStatus("Saved in OneDrive folder");
       } else {
         try {
           const result = await persistWritingToolsToDisk(selectedPayload);
@@ -2335,7 +2338,7 @@ export default function Home() {
           setWritingToolsStorageStatus(
             result.conflictCount > 0
               ? "Merged safely; conflicts preserved"
-              : "Synced in OneDrive",
+              : "Saved in OneDrive folder",
           );
           if (result.conflictCount > 0) {
             setSyncConflictNotice(result.message);
@@ -2404,7 +2407,7 @@ export default function Home() {
               storageKeys.templatesUpdatedAt,
               String(payload.updatedAt),
             );
-            setTemplateStorageStatus("Updated from OneDrive");
+            setTemplateStorageStatus("Updated from OneDrive folder");
           }
         }
 
@@ -2437,7 +2440,7 @@ export default function Home() {
               storageKeys.writingToolsUpdatedAt,
               String(payload.updatedAt),
             );
-            setWritingToolsStorageStatus("Updated from OneDrive");
+            setWritingToolsStorageStatus("Updated from OneDrive folder");
           }
         }
         if (statusResponse.ok) {
@@ -3392,7 +3395,10 @@ export default function Home() {
 
   function applyTemplate(template: Template) {
     const hasContent = note.trim().length > 0;
-    if (hasContent && !window.confirm("Replace the current note with this template?")) {
+    const warning = noteCopied
+      ? "Replace the current note with this template?"
+      : "This note has not been copied. Replace it with this template?";
+    if (hasContent && !window.confirm(warning)) {
       return;
     }
     setEditorText(
@@ -3458,7 +3464,7 @@ export default function Home() {
         setWritingToolsStorageStatus(
           result.conflictCount > 0
             ? "Merged safely; conflicts preserved"
-            : "Synced in OneDrive",
+            : "Saved in OneDrive folder",
         );
         if (result.conflictCount > 0) {
           setSyncConflictNotice(result.message);
@@ -3659,7 +3665,7 @@ export default function Home() {
         setTemplateStorageStatus(
           result.conflictCount > 0
             ? "Merged safely; conflicts preserved"
-            : "Synced in OneDrive",
+            : "Saved in OneDrive folder",
         );
         if (result.conflictCount > 0) {
           setSyncConflictNotice(result.message);
@@ -3834,11 +3840,15 @@ export default function Home() {
     } catch {
       await navigator.clipboard.writeText(note);
     }
+    setNoteCopied(true);
     setToast("Note copied to clipboard");
   }
 
   function newNote() {
-    if (note.trim() && !window.confirm("Start a new note? Your current note will be cleared.")) {
+    const warning = noteCopied
+      ? "Start a new note? Your current note will be cleared."
+      : "This note has not been copied. Start a new note and discard it?";
+    if (note.trim() && !window.confirm(warning)) {
       return;
     }
     stopRecording();
@@ -3893,6 +3903,16 @@ export default function Home() {
       ? whisperSupported && whisperReady
       : speechSupported;
 
+  useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!note.trim() || noteCopied) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [note, noteCopied]);
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -3928,13 +3948,25 @@ export default function Home() {
             <span>
               <strong>Shared library</strong>
               <small>
-                {sharedStorageStatus?.oneDrive ? "OneDrive ready" : "Check sync"}
+                {sharedStorageStatus?.oneDrive
+                  ? "OneDrive folder"
+                  : "Check sync"}
               </small>
             </span>
           </button>
           <button className="button subtle" type="button" onClick={newNote}>
             <span aria-hidden="true">＋</span> New note
           </button>
+          {note.trim() && (
+            <span
+              className={`copy-status ${noteCopied ? "copied" : "pending"}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span aria-hidden="true">{noteCopied ? "✓" : "•"}</span>
+              {noteCopied ? "Copied" : "Not copied"}
+            </span>
+          )}
           <button
             className="button primary"
             type="button"
@@ -4074,8 +4106,9 @@ export default function Home() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search library"
+              aria-keyshortcuts="Control+K"
             />
-            <kbd>⌘K</kbd>
+            <kbd>Ctrl K</kbd>
           </label>
 
           <div className="library-list">
@@ -4225,12 +4258,9 @@ export default function Home() {
 
         <section className="note-panel">
           <div className="encounter-strip">
-            <span className="encounter-pill">Outpatient</span>
             <span>{new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date())}</span>
             <span className="divider" />
             <span>{wordCount} words</span>
-            <span className="divider" />
-            <span>English (US)</span>
           </div>
 
           <div className="format-toolbar" aria-label="Text formatting">
@@ -4554,7 +4584,7 @@ export default function Home() {
           >
             <div className="modal-heading">
               <div>
-                <p className="eyebrow">OneDrive status</p>
+                <p className="eyebrow">OneDrive folder status</p>
                 <h2 id="shared-library-title">Shared library</h2>
               </div>
               <button
@@ -4571,7 +4601,7 @@ export default function Home() {
                 <span>
                   <strong>
                     {sharedStorageStatus?.oneDrive
-                      ? `OneDrive on ${sharedStorageStatus.deviceName}`
+                      ? `OneDrive folder on ${sharedStorageStatus.deviceName}`
                       : "Local Documents fallback"}
                   </strong>
                   <small>Reusable writing tools shared between your PCs</small>

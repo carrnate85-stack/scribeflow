@@ -141,6 +141,24 @@ button:disabled {
   gap: 10px;
 }
 
+.copy-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #66766f;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.copy-status.copied {
+  color: #2f7b5d;
+}
+
+.copy-status.pending {
+  color: #8a6a2d;
+}
+
 .sync-status-button {
   min-height: 40px;
   display: inline-flex;
@@ -788,25 +806,6 @@ kbd {
   background: white;
 }
 
-.note-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.save-status {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-right: 8px;
-  color: #7a8681;
-  font-size: 10px;
-}
-
-.save-status span {
-  color: #4d9876;
-}
-
 .toolbar-button {
   min-height: 34px;
   padding: 0 11px;
@@ -832,14 +831,6 @@ kbd {
   color: #79837f;
   background: #fbfcfb;
   font-size: 10px;
-}
-
-.encounter-pill {
-  padding: 4px 7px;
-  border-radius: 5px;
-  color: var(--forest);
-  background: var(--forest-soft);
-  font-weight: 800;
 }
 
 .divider {
@@ -1936,9 +1927,6 @@ kbd {
     display: none;
   }
 
-  .note-actions .save-status {
-    display: none;
-  }
 }
 
 @media (max-width: 720px) {
@@ -1959,6 +1947,10 @@ kbd {
   }
 
   .sync-status-button > span:last-child {
+    display: none;
+  }
+
+  .copy-status {
     display: none;
   }
 
@@ -2024,10 +2016,6 @@ kbd {
 
   .encounter-strip {
     padding: 0 16px;
-  }
-
-  .encounter-strip span:nth-last-child(-n + 3) {
-    display: none;
   }
 
   .format-toolbar {

@@ -167,7 +167,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /mergeWritingToolsForMigration/);
   assert.match(page, /\/config\/writing-tools/);
   assert.match(page, /Syncing to Documents/);
-  assert.match(page, /Updated from OneDrive/);
+  assert.match(page, /Updated from OneDrive folder/);
   assert.match(page, /refreshSharedLibrary/);
   assert.match(page, /OneDrive\\Documents\\ScribeFlow/);
   assert.match(page, /OneDrive sync status/);
@@ -289,7 +289,16 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /parseStoredTemplates/);
   assert.match(page, /parseTemplateVaultPayload/);
   assert.match(page, /http:\/\/127\.0\.0\.1:3001\/config\/templates/);
-  assert.match(page, /Synced in OneDrive/);
+  assert.match(page, /Saved in OneDrive folder/);
+  assert.doesNotMatch(page, /Synced in OneDrive|OneDrive ready/);
+  assert.match(page, /aria-keyshortcuts="Control\+K"/);
+  assert.match(page, /<kbd>Ctrl K<\/kbd>/);
+  assert.match(page, /noteCopied/);
+  assert.match(page, /beforeunload/);
+  assert.match(page, /This note has not been copied/);
+  assert.match(page, /Copied/);
+  assert.match(page, /Not copied/);
+  assert.doesNotMatch(page, /Outpatient|English \(US\)/);
   assert.match(page, /Restoring your templates/);
   assert.match(page, /saveTemplate/);
   assert.match(
