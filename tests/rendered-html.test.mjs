@@ -573,6 +573,12 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(appUpdater, /attempt \$attempt of 3/);
   assert.match(appUpdater, /update-status\.json/);
   assert.match(appUpdater, /Installed version verification failed/);
+  assert.match(appUpdater, /Local\\ScribeFlowUpdater/);
+  assert.match(appUpdater, /WaitOne\(\[TimeSpan\]::FromMinutes\(3\)\)/);
+  assert.match(appUpdater, /ReleaseMutex\(\)/);
+  assert.match(appUpdater, /Remove-ScribeFlowUpdateDirectory/);
+  assert.match(appUpdater, /attempt -le 5/);
+  assert.match(appUpdater, /Another ScribeFlow update is already running/);
   assert.match(installerWorkflow, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.doesNotMatch(installerBuilder, /templates\.json|Downloads\\.*\.pdf/);
   assert.match(styles, /\.whisper-setup-banner/);
@@ -605,7 +611,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.19"/);
+  assert.match(packageJson, /"version": "0\.1\.20"/);
 });
 
 test("extracts past medical history only through the next section", async () => {

@@ -44,6 +44,33 @@ function Assert-SafeUpdatePath {
     }
 }
 
+function Remove-ScribeFlowUpdateDirectory {
+    param([string]$Path)
+
+    Assert-SafeUpdatePath -Path $Path
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $lastError = ""
+    for ($attempt = 1; $attempt -le 5; $attempt += 1) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return
+            }
+            throw "The temporary update directory still exists."
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt 5) {
+                Start-Sleep -Milliseconds (250 * $attempt)
+            }
+        }
+    }
+    throw "The temporary update directory could not be cleared: $lastError"
+}
+
 function Write-ScribeFlowUpdateLog {
     param([string]$Message)
 
@@ -178,9 +205,7 @@ $packageRoot = Join-Path $releaseRoot "package"
 
 Assert-SafeUpdatePath -Path $releaseRoot
 New-Item -ItemType Directory -Path $updatesRoot -Force | Out-Null
-if (Test-Path -LiteralPath $releaseRoot) {
-    Remove-Item -LiteralPath $releaseRoot -Recurse -Force
-}
+Remove-ScribeFlowUpdateDirectory -Path $releaseRoot
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 
 Write-Host "Downloading the verified ScribeFlow update..." -ForegroundColor Cyan
@@ -289,7 +314,23 @@ Set-ScribeFlowUpdateStatus -Stage "installed" `
     -Message "ScribeFlow $latestVersion was installed successfully."
 }
 
+$updateMutex = [Threading.Mutex]::new($false, "Local\ScribeFlowUpdater")
+$ownsUpdateMutex = $false
 try {
+    try {
+        $ownsUpdateMutex = $updateMutex.WaitOne([TimeSpan]::FromMinutes(3))
+    }
+    catch [Threading.AbandonedMutexException] {
+        $ownsUpdateMutex = $true
+    }
+    if (-not $ownsUpdateMutex) {
+        Write-Host "Another ScribeFlow update is already running." `
+            -ForegroundColor DarkGray
+        Set-ScribeFlowUpdateStatus -Stage "busy" `
+            -Message "Another ScribeFlow update is already running."
+        return
+    }
+
     Invoke-ScribeFlowUpdate
 }
 catch {
@@ -302,4 +343,10 @@ catch {
         -Version $failedVersion `
         -Message "Update failed after automatic retries: $($_.Exception.Message)"
     throw
+}
+finally {
+    if ($ownsUpdateMutex) {
+        $updateMutex.ReleaseMutex()
+    }
+    $updateMutex.Dispose()
 }
