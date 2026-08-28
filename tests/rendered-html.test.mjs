@@ -108,6 +108,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
     new URL("../installer/Install-ScribeFlow.ps1", import.meta.url),
     "utf8",
   );
+  const uninstaller = await readFile(
+    new URL("../scripts/uninstall-scribeflow.ps1", import.meta.url),
+    "utf8",
+  );
   const installerWorkflow = await readFile(
     new URL(
       "../.github/workflows/build-windows-installer.yml",
@@ -560,6 +564,15 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installer, /verifiedInstalledVersion/);
   assert.match(installer, /\$desktopShortcut\.IconLocation = "\$installedIcon,0"/);
   assert.match(installer, /\$startMenuShortcut\.IconLocation = "\$installedIcon,0"/);
+  assert.match(installer, /GetFolderPath\("Startup"\)/);
+  assert.match(installer, /ScribeFlow Background\.lnk/);
+  assert.match(
+    installer,
+    /\$startupShortcut\.Arguments[\s\S]*-NoBrowser[\s\S]*launch-scribeflow\.ps1/,
+  );
+  assert.match(installer, /http:\/\/127\.0\.0\.1:3000/);
+  assert.match(uninstaller, /ScribeFlow Background\.lnk/);
+  assert.match(uninstaller, /Remove-Item -LiteralPath \$startupShortcut/);
   assert.doesNotMatch(installer, /\$SkipModelDownload/);
   assert.match(startLauncher, /update-scribeflow\.ps1/);
   assert.match(startLauncher, /launch-scribeflow\.ps1/);
@@ -611,7 +624,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.20"/);
+  assert.match(packageJson, /"version": "0\.1\.21"/);
 });
 
 test("extracts past medical history only through the next section", async () => {

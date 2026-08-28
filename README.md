@@ -71,6 +71,12 @@ model. On the destination computer:
 5. If Whisper is not present, ScribeFlow recommends it in the app. Click
    **Install Whisper** and keep ScribeFlow open during the verified download.
 
+The installer adds **ScribeFlow Background** to the current user's Windows
+Startup folder. At sign-in it starts the loopback-only ScribeFlow services in
+the background without opening a browser or checking for updates. Bookmark
+`http://127.0.0.1:3000` to open the ready app directly. The desktop and Start
+Menu shortcuts still check for verified updates before opening ScribeFlow.
+
 Installation does not require administrator access. The ScribeFlow installer
 stays small and never contains or automatically transfers the approximately
 3.2 GB speech model. Whisper downloads only after the in-app recommendation is

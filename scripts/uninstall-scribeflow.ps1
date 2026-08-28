@@ -72,9 +72,16 @@ $desktopShortcut = Join-Path (
 $startMenuFolder = Join-Path (
     [Environment]::GetFolderPath("StartMenu")
 ) "Programs\ScribeFlow"
+$startupFolder = [Environment]::GetFolderPath("Startup")
+if (-not $startupFolder) {
+    $startupFolder = Join-Path $env:APPDATA `
+        "Microsoft\Windows\Start Menu\Programs\Startup"
+}
+$startupShortcut = Join-Path $startupFolder "ScribeFlow Background.lnk"
 Remove-Item -LiteralPath $desktopShortcut -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $startMenuFolder -Recurse -Force `
     -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $startupShortcut -Force -ErrorAction SilentlyContinue
 Remove-Item `
     -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScribeFlow" `
     -Recurse -Force -ErrorAction SilentlyContinue
