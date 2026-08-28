@@ -203,6 +203,28 @@ $startMenuShortcut.Description = "Local-only clinical dictation"
 $startMenuShortcut.IconLocation = "$installedIcon,0"
 $startMenuShortcut.Save()
 
+# Start only ScribeFlow's loopback services at Windows sign-in. The normal
+# desktop/Start Menu launcher remains responsible for update checks and for
+# opening the browser, while a browser bookmark can go straight to port 3000.
+$startupFolder = [Environment]::GetFolderPath("Startup")
+if (-not $startupFolder) {
+    $startupFolder = Join-Path $env:APPDATA `
+        "Microsoft\Windows\Start Menu\Programs\Startup"
+}
+New-Item -ItemType Directory -Path $startupFolder -Force | Out-Null
+$startupShortcut = $shell.CreateShortcut(
+    (Join-Path $startupFolder "ScribeFlow Background.lnk")
+)
+$startupShortcut.TargetPath = Join-Path $env:SystemRoot `
+    "System32\WindowsPowerShell\v1.0\powershell.exe"
+$startupShortcut.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -NoBrowser' -f (
+    Join-Path $installRoot "scripts\launch-scribeflow.ps1"
+)
+$startupShortcut.WorkingDirectory = $installRoot
+$startupShortcut.Description = "Start ScribeFlow locally without opening a browser"
+$startupShortcut.IconLocation = "$installedIcon,0"
+$startupShortcut.Save()
+
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScribeFlow"
 New-Item -Path $uninstallKey -Force | Out-Null
 Set-ItemProperty -Path $uninstallKey -Name DisplayName -Value "ScribeFlow"
@@ -267,6 +289,8 @@ Write-Host "ScribeFlow was installed successfully." -ForegroundColor Green
 Write-Host "Templates sync through Documents\ScribeFlow when the app opens."
 Write-Host "Whisper is kept separately and can be installed inside ScribeFlow."
 Write-Host "No notes, PDFs, audio, templates, or patient data were included."
+Write-Host "ScribeFlow will start silently at Windows sign-in."
+Write-Host "Bookmark http://127.0.0.1:3000 to open it in your browser."
 
 if (-not $NoLaunch) {
     Start-Process -FilePath $installedLauncher
