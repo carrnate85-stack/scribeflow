@@ -624,7 +624,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.21"/);
+  assert.match(packageJson, /"version": "0\.1\.22"/);
 });
 
 test("extracts past medical history only through the next section", async () => {
@@ -685,12 +685,59 @@ test("summarizes PAP compliance metrics for the .cpap field", async () => {
     extractCpapSummary(reportText),
     [
       "PAP compliance period: 07/06/2026 - 08/04/2026.",
-      "Usage: 28/30 days (93%) used; >=4 hours 23 days (77%); average 5 hours 20 minutes on days used.",
+      "Usage days: 28/30 days (93%).",
+      "Days with at least 4 hours: 23 days (77%).",
+      "Average usage on days used: 5 hours 20 minutes.",
       "Settings: AutoSet 7-12 cmH2O.",
       "95th percentile pressure: 11.5 cmH2O.",
       "95th percentile leak: 23.6 L/min.",
       "Residual AHI: 0.5 events/hour.",
     ].join("\n"),
+  );
+
+  const airViewFixedCpapText = [
+    "Compliance Report",
+    "Patient ID: AHI 731",
+    "Usage 03/01/2025 - 03/30/2025",
+    "Usage days 25/30 days (83%)",
+    ">= 4 hours 22 days (73%)",
+    "Average usage (total days) 6 hours 00 minutes",
+    "Average usage (days used) 7 hours 12 minutes",
+    "AirSense 11 AutoSet",
+    "Mode CPAP",
+    "Set pressure 10.6 cmH2O",
+    "Therapy",
+    "Leaks - L/min Median: 1.2 95th percentile: 8.4 Maximum: 14.3",
+    "Events per hour AI: 0.4 HI: 0.3 AHI: 0.7",
+    "Patient ID: AHI 731",
+    "Used/day (avg.) 7.2 hrs.",
+    "AHI (events/hour) AHI 0.7 HI 0.3 AI 0.4",
+  ].join("\n");
+
+  assert.equal(
+    extractCpapSummary(airViewFixedCpapText),
+    [
+      "PAP compliance period: 03/01/2025 - 03/30/2025.",
+      "Usage days: 25/30 days (83%).",
+      "Days with at least 4 hours: 22 days (73%).",
+      "Average usage on days used: 7 hours 12 minutes.",
+      "Settings: CPAP 10.6 cmH2O.",
+      "95th percentile leak: 8.4 L/min.",
+      "Residual AHI: 0.7 events/hour.",
+    ].join("\n"),
+  );
+
+  assert.equal(
+    extractCpapSummary(
+      [
+        "Patient ID: AHI 804",
+        "Usage days 1/1 days (100%)",
+        "Used/day (avg.) 6.5 hrs.",
+        "Mode CPAP Set pressure 10 cmH2O",
+        "AHI: 1.4",
+      ].join("\n"),
+    ),
+    "Usage days: 1/1 days (100%).\nAverage usage on days used: 6.5 hrs.\nSettings: CPAP 10 cmH2O.\nResidual AHI: 1.4 events/hour.",
   );
 });
 

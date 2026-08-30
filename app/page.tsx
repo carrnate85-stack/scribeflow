@@ -799,6 +799,7 @@ function extractCpapSummary(text: string) {
   ]);
   const averageUsage = findValue([
     /\bAverage usage\s*\(days used\)\s+(\d+\s+hours?(?:\s+\d+\s+minutes?)?)/i,
+    /\bUsed\/day\s*\(avg\.\)\s+(\d+(?:\.\d+)?\s*(?:hrs?|hours?))/i,
     /\bAverage usage\s*\(total days\)\s+(\d+\s+hours?(?:\s+\d+\s+minutes?)?)/i,
   ]);
   const mode = findValue([
@@ -826,7 +827,9 @@ function extractCpapSummary(text: string) {
     /\b95(?:th)? percentile leaks?\s*:?\s*(\d+(?:\.\d+)?)\b/i,
   ]);
   const ahi = findValue([
-    /\bAHI(?:\s*\(events\/hour\))?\s*:?\s*(\d+(?:\.\d+)?)\b/i,
+    /\bEvents per hour\b[\s\S]{0,180}?\bAHI\s*:?\s*(\d+(?:\.\d+)?)\b/i,
+    /\bAHI\s*\(events\/hour\)\s*:?\s*(\d+(?:\.\d+)?)\b/i,
+    /\bAHI\s*:\s*(\d+(?:\.\d+)?)\b/i,
   ]);
 
   if (!usageDays && !fourHourUsage && !mode && !pressure95 && !leak95 && !ahi) {
@@ -836,12 +839,13 @@ function extractCpapSummary(text: string) {
   const lines: string[] = [];
   if (reportPeriod) lines.push(`PAP compliance period: ${reportPeriod}.`);
 
-  const usageParts = [
-    usageDays ? `${usageDays} used` : null,
-    fourHourUsage ? `>=4 hours ${fourHourUsage}` : null,
-    averageUsage ? `average ${averageUsage} on days used` : null,
-  ].filter((value): value is string => Boolean(value));
-  if (usageParts.length > 0) lines.push(`Usage: ${usageParts.join("; ")}.`);
+  if (usageDays) lines.push(`Usage days: ${usageDays}.`);
+  if (fourHourUsage) {
+    lines.push(`Days with at least 4 hours: ${fourHourUsage}.`);
+  }
+  if (averageUsage) {
+    lines.push(`Average usage on days used: ${averageUsage}.`);
+  }
 
   let settings = mode;
   if (minimumPressure && maximumPressure) {
