@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ScribeFlow — Clinical Dictation",
+  title: "ScribeFlow — Clinical Notes",
   description:
-    "A focused medical dictation workspace with reusable quicktext and clinical note templates.",
+    "A private-in-browser clinical note workspace with PDF imports, HST tools, Quicktext, and reusable templates.",
 };
 
 export default function RootLayout({

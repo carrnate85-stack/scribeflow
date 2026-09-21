@@ -34,7 +34,7 @@ test("renders the clinical dictation workspace", async () => {
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
 
   const html = await response.text();
-  assert.match(html, /<title>ScribeFlow — Clinical Dictation<\/title>/i);
+  assert.match(html, /<title>ScribeFlow — Clinical Notes<\/title>/i);
   assert.match(html, /Clinical dictation/);
   assert.match(html, /Writing tools/);
   assert.match(html, /Start dictating or choose a template/);
@@ -336,7 +336,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.doesNotMatch(page, /Untitled encounter|Encounter note|Note title/);
   assert.match(page, /handlePdfUpload/);
   assert.match(page, /showOpenFilePicker/);
-  assert.match(page, /deletePdfAfterScan, setDeletePdfAfterScan\] = useState\(true\)/);
+  assert.match(
+    page,
+    /deletePdfAfterScan, setDeletePdfAfterScan\] = useState\(!webEdition\)/,
+  );
   assert.match(page, /requestPermission/);
   assert.match(page, /mode: "readwrite"/);
   assert.match(page, /scanSucceeded && deleteOriginalAfterScan/);
@@ -624,7 +627,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.22"/);
+  assert.match(packageJson, /"version": "0\.1\.23"/);
 });
 
 test("extracts past medical history only through the next section", async () => {

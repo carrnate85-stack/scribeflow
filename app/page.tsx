@@ -433,6 +433,8 @@ const legacyPatientDataStorageKeys = [
   "scribe-title-v1",
 ];
 
+const webEdition = import.meta.env.VITE_SCRIBEFLOW_WEB === "1";
+
 function parseDockPosition(value: string | null): DockPosition | null {
   if (!value) return null;
   try {
@@ -1413,11 +1415,11 @@ export default function Home() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [templatesReady, setTemplatesReady] = useState(false);
   const [templateStorageStatus, setTemplateStorageStatus] =
-    useState("Loading protected copy");
+    useState(webEdition ? "Saved in this browser" : "Loading protected copy");
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
   const [writingToolsReady, setWritingToolsReady] = useState(false);
   const [writingToolsStorageStatus, setWritingToolsStorageStatus] =
-    useState("Loading shared copy");
+    useState(webEdition ? "Saved in this browser" : "Loading shared copy");
   const [sharedStorageStatus, setSharedStorageStatus] =
     useState<SharedStorageStatus | null>(null);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
@@ -1438,7 +1440,7 @@ export default function Home() {
   );
   const [showHstPaste, setShowHstPaste] = useState(false);
   const [hstPasteText, setHstPasteText] = useState("");
-  const [deletePdfAfterScan, setDeletePdfAfterScan] = useState(true);
+  const [deletePdfAfterScan, setDeletePdfAfterScan] = useState(!webEdition);
   const [isScanningPdf, setIsScanningPdf] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [dictationEngine, setDictationEngine] =
@@ -2268,6 +2270,14 @@ export default function Home() {
 
   const persistTemplatesToDisk = useCallback(
     async (payload: TemplateVaultPayload) => {
+      if (webEdition) {
+        return {
+          payload,
+          conflictCount: 0,
+          conflictFile: null,
+          message: "Templates saved in this browser.",
+        } satisfies VaultWriteResponse<TemplateVaultPayload>;
+      }
       const response = await fetch(
         "http://127.0.0.1:3001/config/templates",
         {
@@ -2289,6 +2299,14 @@ export default function Home() {
 
   const persistWritingToolsToDisk = useCallback(
     async (payload: WritingToolsVaultPayload) => {
+      if (webEdition) {
+        return {
+          payload,
+          conflictCount: 0,
+          conflictFile: null,
+          message: "Writing tools saved in this browser.",
+        } satisfies VaultWriteResponse<WritingToolsVaultPayload>;
+      }
       const response = await fetch(
         "http://127.0.0.1:3001/config/writing-tools",
         {
@@ -2341,16 +2359,18 @@ export default function Home() {
       parseStoredTemplates(storedTemplateBackup);
     void (async () => {
       let diskPayload: TemplateVaultPayload | null = null;
-      try {
-        const response = await fetch(
-          "http://127.0.0.1:3001/config/templates",
-          { cache: "no-store" },
-        );
-        if (response.ok) {
-          diskPayload = parseTemplateVaultPayload(await response.text());
+      if (!webEdition) {
+        try {
+          const response = await fetch(
+            "http://127.0.0.1:3001/config/templates",
+            { cache: "no-store" },
+          );
+          if (response.ok) {
+            diskPayload = parseTemplateVaultPayload(await response.text());
+          }
+        } catch {
+          diskPayload = null;
         }
-      } catch {
-        diskPayload = null;
       }
       templateBaseRef.current = diskPayload;
 
@@ -2396,7 +2416,9 @@ export default function Home() {
         JSON.stringify(diskPayload.templates) === serializedTemplates;
       if (diskMatches) {
         templateBaseRef.current = selectedPayload;
-        setTemplateStorageStatus("Saved in OneDrive folder");
+        setTemplateStorageStatus(
+          webEdition ? "Saved in this browser" : "Saved in OneDrive folder",
+        );
       } else {
         try {
           const result = await persistTemplatesToDisk(selectedPayload);
@@ -2419,7 +2441,9 @@ export default function Home() {
           setTemplateStorageStatus(
             result.conflictCount > 0
               ? "Merged safely; conflicts preserved"
-              : "Saved in OneDrive folder",
+              : webEdition
+                ? "Saved in this browser"
+                : "Saved in OneDrive folder",
           );
           if (result.conflictCount > 0) {
             setSyncConflictNotice(result.message);
@@ -2433,16 +2457,18 @@ export default function Home() {
     const browserVocabulary = parseStoredVocabulary(storedVocabulary);
     void (async () => {
       let diskPayload: WritingToolsVaultPayload | null = null;
-      try {
-        const response = await fetch(
-          "http://127.0.0.1:3001/config/writing-tools",
-          { cache: "no-store" },
-        );
-        if (response.ok) {
-          diskPayload = parseWritingToolsVaultPayload(await response.text());
+      if (!webEdition) {
+        try {
+          const response = await fetch(
+            "http://127.0.0.1:3001/config/writing-tools",
+            { cache: "no-store" },
+          );
+          if (response.ok) {
+            diskPayload = parseWritingToolsVaultPayload(await response.text());
+          }
+        } catch {
+          diskPayload = null;
         }
-      } catch {
-        diskPayload = null;
       }
       writingToolsBaseRef.current = diskPayload;
 
@@ -2508,7 +2534,9 @@ export default function Home() {
         JSON.stringify(diskPayload.vocabulary) === serializedVocabulary;
       if (diskMatches) {
         writingToolsBaseRef.current = selectedPayload;
-        setWritingToolsStorageStatus("Saved in OneDrive folder");
+        setWritingToolsStorageStatus(
+          webEdition ? "Saved in this browser" : "Saved in OneDrive folder",
+        );
       } else {
         try {
           const result = await persistWritingToolsToDisk(selectedPayload);
@@ -2531,7 +2559,9 @@ export default function Home() {
           setWritingToolsStorageStatus(
             result.conflictCount > 0
               ? "Merged safely; conflicts preserved"
-              : "Saved in OneDrive folder",
+              : webEdition
+                ? "Saved in this browser"
+                : "Saved in OneDrive folder",
           );
           if (result.conflictCount > 0) {
             setSyncConflictNotice(result.message);
@@ -2541,30 +2571,40 @@ export default function Home() {
         }
       }
     })();
-    setSpeechSupported(
-      Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
-    );
-    setWhisperSupported(
-      Boolean(navigator.mediaDevices?.getUserMedia && "AudioContext" in window),
-    );
-    if (
-      storedDictationEngine === "whisper" ||
-      storedDictationEngine === "chrome"
-    ) {
-      setDictationEngine(storedDictationEngine);
+    if (!webEdition) {
+      setSpeechSupported(
+        Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+      );
+      setWhisperSupported(
+        Boolean(navigator.mediaDevices?.getUserMedia && "AudioContext" in window),
+      );
+      if (
+        storedDictationEngine === "whisper" ||
+        storedDictationEngine === "chrome"
+      ) {
+        setDictationEngine(storedDictationEngine);
+      }
+      if (storedMicrophoneId) {
+        setSelectedMicrophoneId(storedMicrophoneId);
+      }
+      if (storedDockCollapsed === "false") {
+        setDockCollapsed(false);
+      }
+      setDockPosition(storedDockPosition);
+      void refreshMicrophones();
     }
-    if (storedMicrophoneId) {
-      setSelectedMicrophoneId(storedMicrophoneId);
-    }
-    if (storedDockCollapsed === "false") {
-      setDockCollapsed(false);
-    }
-    setDockPosition(storedDockPosition);
-    void refreshMicrophones();
   }, [persistTemplatesToDisk, persistWritingToolsToDisk, refreshMicrophones]);
 
   useEffect(() => {
     if (!templatesReady || !writingToolsReady) return;
+    if (webEdition) {
+      refreshSharedLibraryRef.current = async (showFeedback = false) => {
+        if (showFeedback) setToast("Writing tools are saved in this browser");
+      };
+      return () => {
+        refreshSharedLibraryRef.current = null;
+      };
+    }
 
     let cancelled = false;
     const refreshSharedLibrary = async (showFeedback = false) => {
@@ -2678,6 +2718,7 @@ export default function Home() {
   }, [templatesReady, writingToolsReady]);
 
   useEffect(() => {
+    if (webEdition) return;
     const mediaDevices = navigator.mediaDevices;
     if (!mediaDevices?.addEventListener) return;
     mediaDevices.addEventListener("devicechange", refreshMicrophones);
@@ -2758,6 +2799,7 @@ export default function Home() {
   }, [whisperReady]);
 
   const refreshWhisperInstallStatus = useCallback(async () => {
+    if (webEdition) return;
     try {
       const response = await fetch(
         "http://127.0.0.1:3001/whisper/install-status",
@@ -2777,6 +2819,7 @@ export default function Home() {
   }, []);
 
   const installWhisper = useCallback(async () => {
+    if (webEdition) return;
     setWhisperUpdatePromptDismissed(false);
     setWhisperInstallStatus({
       status: "installing",
@@ -2804,10 +2847,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (webEdition) return;
     void refreshWhisperInstallStatus();
   }, [refreshWhisperInstallStatus]);
 
   useEffect(() => {
+    if (webEdition) return;
     if (
       whisperInstallStatus.status !== "installing" &&
       whisperInstallStatus.status !== "starting"
@@ -2822,6 +2867,7 @@ export default function Home() {
   }, [refreshWhisperInstallStatus, whisperInstallStatus.status]);
 
   useEffect(() => {
+    if (webEdition) return;
     if (
       dictationEngine !== "whisper" ||
       !whisperSupported ||
@@ -2849,6 +2895,7 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    if (webEdition) return;
     if (dictationEngine !== "whisper" || whisperReady) return;
     if (whisperInstallStatus.status === "installing") {
       setStatus("Installing Whisper locally");
@@ -3496,6 +3543,7 @@ export default function Home() {
   useEffect(() => {
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
       if (
+        !webEdition &&
         event.code === "Backquote" &&
         !event.ctrlKey &&
         !event.metaKey &&
@@ -4260,22 +4308,36 @@ export default function Home() {
   }, [note, noteCopied]);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${webEdition ? "web-edition" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
             S
           </span>
           <div>
-            <strong>ScribeFlow</strong>
-            <span>Clinical dictation</span>
+            <strong>{webEdition ? "ScribeFlow Web" : "ScribeFlow"}</strong>
+            <span>
+              {webEdition ? "Clinical notes · Dragon ready" : "Clinical dictation"}
+            </span>
           </div>
         </div>
         <div className="privacy-badge">
           <span className="privacy-dot" aria-hidden="true" />
-          Local only — nothing leaves this device
+          {webEdition
+            ? "Clinical content stays in this browser"
+            : "Local only — nothing leaves this device"}
         </div>
         <div className="top-actions">
+          {webEdition ? (
+            <div className="dragon-ready-badge" aria-label="Ready for Dragon dictation">
+              <span aria-hidden="true">D</span>
+              <div>
+                <strong>Dragon ready</strong>
+                <small>Dictate into the note</small>
+              </div>
+            </div>
+          ) : (
+            <>
           <label
             className="topbar-microphone-picker"
             title="Microphone used for local dictation"
@@ -4341,6 +4403,8 @@ export default function Home() {
               </small>
             </span>
           </button>
+            </>
+          )}
           <button className="button subtle" type="button" onClick={newNote}>
             <span aria-hidden="true">＋</span> New note
           </button>
@@ -4365,7 +4429,8 @@ export default function Home() {
         </div>
       </header>
 
-      {dictationEngine === "whisper" &&
+      {!webEdition &&
+        dictationEngine === "whisper" &&
         (!whisperReady ||
           whisperInstallStatus.status === "update_available") && (
           <section
@@ -4724,20 +4789,22 @@ export default function Home() {
               <span aria-hidden="true">HST</span>
               Paste HST
             </button>
-            <label
-              className="pdf-delete-option"
-              title="Permanently delete the selected original PDF only after a successful import"
-            >
-              <input
-                type="checkbox"
-                checked={deletePdfAfterScan}
-                onChange={(event) =>
-                  setDeletePdfAfterScan(event.target.checked)
-                }
-                disabled={isScanningPdf}
-              />
-              Delete after import
-            </label>
+            {!webEdition && (
+              <label
+                className="pdf-delete-option"
+                title="Permanently delete the selected original PDF only after a successful import"
+              >
+                <input
+                  type="checkbox"
+                  checked={deletePdfAfterScan}
+                  onChange={(event) =>
+                    setDeletePdfAfterScan(event.target.checked)
+                  }
+                  disabled={isScanningPdf}
+                />
+                Delete after import
+              </label>
+            )}
             <span className="pdf-import-live" role="status" aria-live="polite">
               {pdfStatus}. {papPdfStatus}. {hstStatus}.
             </span>
@@ -4747,10 +4814,15 @@ export default function Home() {
             {!note && !interimText && (
               <div className="empty-state" aria-hidden="true">
                 <span className="empty-symbol">“</span>
-                <h3>Start dictating or choose a template</h3>
+                <h3>
+                  {webEdition
+                    ? "Dictate with Dragon or choose a template"
+                    : "Start dictating or choose a template"}
+                </h3>
                 <p>
-                  Your note appears here as you speak. You can edit it at any
-                  time.
+                  {webEdition
+                    ? "Click the note, then use Dragon normally. You can also type or paste text."
+                    : "Your note appears here as you speak. You can edit it at any time."}
                 </p>
               </div>
             )}
@@ -4803,8 +4875,9 @@ export default function Home() {
             )}
           </div>
 
-          <div
-            ref={dockRef}
+          {!webEdition && (
+            <div
+              ref={dockRef}
             className={`dictation-dock ${isRecording ? "recording" : ""} ${
               dockCollapsed ? "collapsed" : "expanded"
             } ${dockPosition ? "custom-position" : ""} ${
@@ -4979,11 +5052,13 @@ export default function Home() {
                 </div>
               </>
             )}
-          </div>
+            </div>
+          )}
         </section>
       </div>
 
-      {whisperInstallStatus.status === "update_available" &&
+      {!webEdition &&
+        whisperInstallStatus.status === "update_available" &&
         !whisperUpdatePromptDismissed && (
           <div className="modal-backdrop" role="presentation">
             <div
@@ -5023,7 +5098,7 @@ export default function Home() {
           </div>
         )}
 
-      {showSystemCheck && (
+      {!webEdition && showSystemCheck && (
         <div className="modal-backdrop" role="presentation">
           <div
             className="modal-card system-check-modal"
@@ -5183,7 +5258,7 @@ export default function Home() {
         </div>
       )}
 
-      {showSyncDashboard && (
+      {!webEdition && showSyncDashboard && (
         <div className="modal-backdrop" role="presentation">
           <div
             className="modal-card sync-modal"
