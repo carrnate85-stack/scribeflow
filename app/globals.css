@@ -143,6 +143,51 @@ button:disabled {
   gap: 10px;
 }
 
+.web-edition .privacy-badge {
+  transform: none;
+}
+
+.dragon-ready-badge {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 11px;
+  border: 1px solid #d5e3dc;
+  border-radius: 10px;
+  color: #315e50;
+  background: #f4faf7;
+}
+
+.dragon-ready-badge > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: white;
+  background: var(--forest);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dragon-ready-badge > div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.dragon-ready-badge strong {
+  font-size: 12px;
+}
+
+.dragon-ready-badge small {
+  margin-top: 2px;
+  color: #6c7c75;
+  font-size: 12px;
+}
+
 .topbar-microphone-picker {
   width: 130px;
   min-height: 40px;
@@ -2344,6 +2389,14 @@ kbd {
 
   .copy-status {
     display: none;
+  }
+
+  .dragon-ready-badge small {
+    display: none;
+  }
+
+  .dragon-ready-badge {
+    padding: 5px 7px;
   }
 
   .workspace {
