@@ -19,6 +19,9 @@ test("release workflow verifies the exact installer assets it builds", async () 
     workflow,
     /\$zip = "\$env:RUNNER_TEMP\\ScribeFlow-Online-Installer\.zip"/,
   );
+  assert.match(workflow, /releases\/tags\/\$tag/);
+  assert.match(workflow, /\$statusCode -ne 404/);
+  assert.doesNotMatch(workflow, /gh release view \$tag --json isDraft/);
 });
 
 test("portable installer pins a patched Node 22 or newer runtime", async () => {
