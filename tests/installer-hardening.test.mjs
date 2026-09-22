@@ -94,6 +94,8 @@ test("captures installer output and retains exactly one successful update archiv
   assert.ok(installerLaunch);
   assert.doesNotMatch(installerLaunch, /-Wait\b/);
   assert.match(updater, /\$process\.WaitForExit\(600000\)/);
+  assert.match(updater, /\$null -ne \$exitCode -and \$exitCode -ne 0/);
+  assert.match(updater, /installed version and loopback health/);
   assert.match(updater, /installerExitCode/);
   assert.match(updater, /Add-InstallerOutputToLog/);
   assert.match(updater, /Prune-ScribeFlowUpdateCache -KeepPath \$releaseRoot/);
