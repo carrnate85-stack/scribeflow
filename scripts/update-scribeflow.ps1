@@ -446,8 +446,12 @@ function Invoke-ScribeFlowUpdate {
                 -Installer $installer `
                 -ReleaseRoot $releaseRoot `
                 -Attempt $attempt
-            if ($exitCode -ne 0) {
+            if ($null -ne $exitCode -and $exitCode -ne 0) {
                 throw "Installer exited with code $exitCode."
+            }
+            if ($null -eq $exitCode) {
+                Write-ScribeFlowUpdateLog `
+                    "Installer exit code was unavailable; checking installed version and loopback health."
             }
             $installedVersionFile = Join-Path $env:LOCALAPPDATA `
                 "Programs\ScribeFlow\app-version.json"

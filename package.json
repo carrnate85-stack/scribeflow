@@ -1,6 +1,6 @@
 {
   "name": "scribeflow-clinical-dictation",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "packageManager": "pnpm@11.27.1",
   "engines": {
