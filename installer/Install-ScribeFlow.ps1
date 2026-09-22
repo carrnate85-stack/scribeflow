@@ -240,7 +240,6 @@ foreach ($requiredPath in @(
     (Join-Path $payloadRoot "scripts\install-native-whisper.ps1"),
     (Join-Path $payloadRoot "scripts\whisper-release.json"),
     (Join-Path $payloadRoot "scripts\whisper-release-utils.mjs"),
-    (Join-Path $payloadRoot "scripts\document-storage-utils.mjs"),
     (Join-Path $payloadRoot "scripts\library-sync-utils.mjs"),
     (Join-Path $payloadRoot "assets\ScribeFlow.ico"),
     (Join-Path $payloadRoot "dist\server\index.js"),

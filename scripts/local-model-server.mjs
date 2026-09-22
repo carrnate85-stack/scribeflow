@@ -20,7 +20,6 @@ import { homedir, hostname } from "node:os";
 import { extname, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { saveNoteDocument } from "./document-storage-utils.mjs";
 import {
   reconcileTemplatePayload,
   reconcileWritingToolsPayload,
@@ -91,7 +90,6 @@ const defaultDocumentsRoot = process.env.OneDrive
 const documentsRoot = resolve(
   process.env.SCRIBEFLOW_DOCUMENTS_ROOT || defaultDocumentsRoot,
 );
-const notesRoot = resolve(documentsRoot, "Notes");
 const templatesRoot = resolve(documentsRoot, "Templates");
 const templatesFile = resolve(templatesRoot, "templates.json");
 const templateBackupsRoot = resolve(templatesRoot, "Backups");
@@ -120,7 +118,6 @@ const port =
     : 3001;
 const maxTemplateBytes = 5 * 1024 * 1024;
 const maxWritingToolsBytes = 2 * 1024 * 1024;
-const maxNoteBytes = 2 * 1024 * 1024;
 const maxPdfDeleteRequestBytes = 8 * 1024;
 const maxNativeWhisperRequestBytes = 64 * 1024 * 1024;
 const allowedOrigins = new Set([
@@ -1234,49 +1231,6 @@ const server = createServer(async (request, response) => {
           409,
           "The selected PDF could not be verified and deleted from Downloads",
         );
-      }
-    });
-    return;
-  }
-  if (url.pathname === "/documents/save-note") {
-    if (request.method !== "POST") {
-      sendText(response, 405, "Method not allowed");
-      return;
-    }
-    const chunks = [];
-    let size = 0;
-    let rejected = false;
-    request.on("data", (chunk) => {
-      if (rejected) return;
-      size += chunk.length;
-      if (size > maxNoteBytes) {
-        rejected = true;
-        sendText(response, 413, "The note is too large to save");
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on("end", () => {
-      if (rejected) return;
-      try {
-        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        if (
-          !payload ||
-          typeof payload !== "object" ||
-          typeof payload.title !== "string" ||
-          typeof payload.note !== "string" ||
-          typeof payload.noteHtml !== "string"
-        ) {
-          sendText(response, 400, "Invalid note");
-          return;
-        }
-        const saved = saveNoteDocument(notesRoot, payload);
-        sendJson(response, 201, {
-          fileName: saved.fileName,
-          folder: notesRoot,
-        });
-      } catch {
-        sendText(response, 500, "The note could not be saved");
       }
     });
     return;

@@ -7286,6 +7286,14 @@ export default function Home() {
                 </span>
                 <em>{sharedStorageStatus?.oneDrive ? "Available" : "Check folder"}</em>
               </div>
+              <div className="system-check-row ready">
+                <span className="system-check-dot" aria-hidden="true">✓</span>
+                <span>
+                  <strong>Draft note</strong>
+                  <small>Held in memory; copy it before closing</small>
+                </span>
+                <em>In memory</em>
+              </div>
               <div
                 className={`system-check-row ${
                   sharedLibraryReady ? "ready" : "attention"

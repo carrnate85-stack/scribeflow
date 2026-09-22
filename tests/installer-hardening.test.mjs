@@ -118,7 +118,8 @@ test("uses Windows Known Documents and never silently prefers personal OneDrive"
   assert.ok(consumer > commercial);
   assert.match(launcher, /storage-location\.json/);
   assert.match(launcher, /Save-ScribeFlowDocumentsSelection/);
-  assert.match(launcher, /ScribeFlow documents: \$documentsRoot/);
+  assert.match(launcher, /ScribeFlow shared library: \$documentsRoot/);
+  assert.doesNotMatch(launcher, /Join-Path \$documentsRoot "Notes"/);
   assert.match(launcher, /\$env:SCRIBEFLOW_DOCUMENTS_ROOT = \$documentsRoot/);
 });
 
