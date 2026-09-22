@@ -53,6 +53,18 @@ type WritingToolsVaultPayload = {
   vocabulary: VocabularyItem[];
 };
 
+type WebSharedLibraryPayload = {
+  version: 1;
+  updatedAt: number;
+  templates: Template[];
+  quicktexts: Quicktext[];
+  vocabulary: VocabularyItem[];
+};
+
+type GitHubContentFile = {
+  sha: string;
+};
+
 type VaultWriteResponse<T> = {
   payload: T;
   conflictCount: number;
@@ -434,6 +446,13 @@ const legacyPatientDataStorageKeys = [
 ];
 
 const webEdition = import.meta.env.VITE_SCRIBEFLOW_WEB === "1";
+const webSharedLibraryFile = "public/shared-library.json";
+const webSharedLibraryOwner = "carrnate85-stack";
+const webSharedLibraryRepository = "scribeflow";
+
+function webSharedLibraryUrl() {
+  return `${import.meta.env.BASE_URL}shared-library.json`;
+}
 
 function parseDockPosition(value: string | null): DockPosition | null {
   if (!value) return null;
@@ -585,6 +604,52 @@ function parseWritingToolsVaultPayload(
   } catch {
     return null;
   }
+}
+
+function parseWebSharedLibraryPayload(
+  value: string | null,
+): WebSharedLibraryPayload | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<WebSharedLibraryPayload>;
+    const templates = Array.isArray(parsed.templates)
+      ? parseStoredTemplates(JSON.stringify(parsed.templates))
+      : null;
+    const quicktexts = Array.isArray(parsed.quicktexts)
+      ? parseStoredQuicktexts(JSON.stringify(parsed.quicktexts))
+      : null;
+    const vocabulary = Array.isArray(parsed.vocabulary)
+      ? parseStoredVocabulary(JSON.stringify(parsed.vocabulary))
+      : null;
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.updatedAt !== "number" ||
+      !Number.isFinite(parsed.updatedAt) ||
+      !templates ||
+      !quicktexts ||
+      !vocabulary
+    ) {
+      return null;
+    }
+    return {
+      version: 1,
+      updatedAt: parsed.updatedAt,
+      templates,
+      quicktexts,
+      vocabulary,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function encodeBase64Utf8(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return window.btoa(binary);
 }
 
 function mergeWritingToolsForMigration(
@@ -1415,16 +1480,24 @@ export default function Home() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [templatesReady, setTemplatesReady] = useState(false);
   const [templateStorageStatus, setTemplateStorageStatus] =
-    useState(webEdition ? "Saved in this browser" : "Loading protected copy");
+    useState(webEdition ? "Checking shared library" : "Loading protected copy");
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
   const [writingToolsReady, setWritingToolsReady] = useState(false);
   const [writingToolsStorageStatus, setWritingToolsStorageStatus] =
-    useState(webEdition ? "Saved in this browser" : "Loading shared copy");
+    useState(webEdition ? "Checking shared library" : "Loading shared copy");
   const [sharedStorageStatus, setSharedStorageStatus] =
     useState<SharedStorageStatus | null>(null);
   const [syncRefreshing, setSyncRefreshing] = useState(false);
   const [syncConflictNotice, setSyncConflictNotice] = useState("");
   const [showSyncDashboard, setShowSyncDashboard] = useState(false);
+  const [webSharedLibraryStatus, setWebSharedLibraryStatus] = useState(
+    "Checking shared library",
+  );
+  const [showWebLibraryPublish, setShowWebLibraryPublish] = useState(false);
+  const [githubPublishingToken, setGithubPublishingToken] = useState("");
+  const [githubPublishConfirmed, setGithubPublishConfirmed] = useState(false);
+  const [webLibraryPublishing, setWebLibraryPublishing] = useState(false);
+  const [webLibraryPublishError, setWebLibraryPublishError] = useState("");
   const [showSystemCheck, setShowSystemCheck] = useState(false);
   const [systemCheckRefreshing, setSystemCheckRefreshing] = useState(false);
   const [pdfMeasurements, setPdfMeasurements] =
@@ -1491,6 +1564,7 @@ export default function Home() {
   const recognitionRef = useRef<Recognition | null>(null);
   const templatesUpdatedAtRef = useRef(0);
   const writingToolsUpdatedAtRef = useRef(0);
+  const webSharedLibraryUpdatedAtRef = useRef(0);
   const templateBaseRef = useRef<TemplateVaultPayload | null>(null);
   const writingToolsBaseRef = useRef<WritingToolsVaultPayload | null>(null);
   const refreshSharedLibraryRef = useRef<
@@ -2380,7 +2454,9 @@ export default function Home() {
             updatedAt:
               storedTemplatesUpdatedAt > 0
                 ? storedTemplatesUpdatedAt
-                : Date.now(),
+                : webEdition
+                  ? 0
+                  : Date.now(),
             templates: browserTemplates,
           }
         : null;
@@ -2392,7 +2468,7 @@ export default function Home() {
           : diskPayload ||
             browserPayload || {
               version: 1 as const,
-              updatedAt: Date.now(),
+              updatedAt: webEdition ? 0 : Date.now(),
               templates: starterTemplates,
             };
 
@@ -2417,7 +2493,7 @@ export default function Home() {
       if (diskMatches) {
         templateBaseRef.current = selectedPayload;
         setTemplateStorageStatus(
-          webEdition ? "Saved in this browser" : "Saved in OneDrive folder",
+          webEdition ? "Local changes not published" : "Saved in OneDrive folder",
         );
       } else {
         try {
@@ -2442,7 +2518,7 @@ export default function Home() {
             result.conflictCount > 0
               ? "Merged safely; conflicts preserved"
               : webEdition
-                ? "Saved in this browser"
+                ? "Local changes not published"
                 : "Saved in OneDrive folder",
           );
           if (result.conflictCount > 0) {
@@ -2508,7 +2584,7 @@ export default function Home() {
               }
             : {
                 version: 1,
-                updatedAt: Date.now(),
+                updatedAt: webEdition ? 0 : Date.now(),
                 quicktexts: starterQuicktexts,
                 vocabulary: [],
               });
@@ -2535,7 +2611,7 @@ export default function Home() {
       if (diskMatches) {
         writingToolsBaseRef.current = selectedPayload;
         setWritingToolsStorageStatus(
-          webEdition ? "Saved in this browser" : "Saved in OneDrive folder",
+          webEdition ? "Local changes not published" : "Saved in OneDrive folder",
         );
       } else {
         try {
@@ -2560,7 +2636,7 @@ export default function Home() {
             result.conflictCount > 0
               ? "Merged safely; conflicts preserved"
               : webEdition
-                ? "Saved in this browser"
+                ? "Local changes not published"
                 : "Saved in OneDrive folder",
           );
           if (result.conflictCount > 0) {
@@ -2598,10 +2674,126 @@ export default function Home() {
   useEffect(() => {
     if (!templatesReady || !writingToolsReady) return;
     if (webEdition) {
-      refreshSharedLibraryRef.current = async (showFeedback = false) => {
-        if (showFeedback) setToast("Writing tools are saved in this browser");
+      let cancelled = false;
+      const refreshWebSharedLibrary = async (showFeedback = false) => {
+        if (showFeedback) setSyncRefreshing(true);
+        try {
+          const response = await fetch(
+            `${webSharedLibraryUrl()}?refresh=${Date.now()}`,
+            { cache: "no-store" },
+          );
+          if (!response.ok) throw new Error("Shared library unavailable");
+          const payload = parseWebSharedLibraryPayload(await response.text());
+          if (!payload) throw new Error("Shared library is invalid");
+          if (cancelled) return;
+
+          webSharedLibraryUpdatedAtRef.current = payload.updatedAt;
+          let updated = false;
+          if (payload.updatedAt > templatesUpdatedAtRef.current) {
+            const serializedTemplates = JSON.stringify(payload.templates);
+            templatesUpdatedAtRef.current = payload.updatedAt;
+            templateBaseRef.current = {
+              version: 1,
+              updatedAt: payload.updatedAt,
+              templates: payload.templates,
+            };
+            setTemplates(payload.templates);
+            window.localStorage.setItem(
+              storageKeys.templates,
+              serializedTemplates,
+            );
+            window.localStorage.setItem(
+              storageKeys.templatesBackup,
+              serializedTemplates,
+            );
+            window.localStorage.setItem(
+              storageKeys.templatesUpdatedAt,
+              String(payload.updatedAt),
+            );
+            updated = true;
+          }
+
+          if (payload.updatedAt > writingToolsUpdatedAtRef.current) {
+            writingToolsUpdatedAtRef.current = payload.updatedAt;
+            writingToolsBaseRef.current = {
+              version: 1,
+              updatedAt: payload.updatedAt,
+              quicktexts: payload.quicktexts,
+              vocabulary: payload.vocabulary,
+            };
+            setQuicktexts(payload.quicktexts);
+            setVocabulary(payload.vocabulary);
+            window.localStorage.setItem(
+              storageKeys.quicktexts,
+              JSON.stringify(payload.quicktexts),
+            );
+            window.localStorage.setItem(
+              storageKeys.vocabulary,
+              JSON.stringify(payload.vocabulary),
+            );
+            window.localStorage.setItem(
+              storageKeys.writingToolsUpdatedAt,
+              String(payload.updatedAt),
+            );
+            updated = true;
+          }
+
+          const templatesPending =
+            templatesUpdatedAtRef.current > payload.updatedAt;
+          const writingToolsPending =
+            writingToolsUpdatedAtRef.current > payload.updatedAt;
+          setTemplateStorageStatus(
+            templatesPending
+              ? "Local changes not published"
+              : "Shared across computers",
+          );
+          setWritingToolsStorageStatus(
+            writingToolsPending
+              ? "Local changes not published"
+              : "Shared across computers",
+          );
+          setWebSharedLibraryStatus(
+            templatesPending || writingToolsPending
+              ? "Local changes are waiting to be published"
+              : "Shared library is current",
+          );
+          if (showFeedback) {
+            setToast(
+              updated
+                ? "Shared library updated on this computer"
+                : templatesPending || writingToolsPending
+                  ? "Local changes are ready to publish"
+                  : "Shared library is current",
+            );
+          }
+        } catch {
+          if (!cancelled) {
+            setWebSharedLibraryStatus("Shared library could not be reached");
+            if (showFeedback) {
+              setToast("Shared library could not be checked");
+            }
+          }
+        } finally {
+          if (showFeedback) setSyncRefreshing(false);
+        }
       };
+      refreshSharedLibraryRef.current = refreshWebSharedLibrary;
+      const refreshWhenVisible = () => {
+        if (document.visibilityState === "visible") {
+          void refreshWebSharedLibrary();
+        }
+      };
+      const timer = window.setInterval(() => {
+        void refreshWebSharedLibrary();
+      }, 60000);
+      void refreshWebSharedLibrary();
+      window.addEventListener("focus", refreshWhenVisible);
+      document.addEventListener("visibilitychange", refreshWhenVisible);
       return () => {
+        cancelled = true;
+        window.clearInterval(timer);
+        window.removeEventListener("focus", refreshWhenVisible);
+        document.removeEventListener("visibilitychange", refreshWhenVisible);
         refreshSharedLibraryRef.current = null;
       };
     }
@@ -3696,7 +3888,12 @@ export default function Home() {
       storageKeys.writingToolsUpdatedAt,
       String(updatedAt),
     );
-    setWritingToolsStorageStatus("Syncing to Documents...");
+    setWritingToolsStorageStatus(
+      webEdition ? "Local changes not published" : "Syncing to Documents...",
+    );
+    if (webEdition) {
+      setWebSharedLibraryStatus("Local changes are waiting to be published");
+    }
     void persistWritingToolsToDisk(payload)
       .then((result) => {
         writingToolsBaseRef.current = result.payload;
@@ -3718,7 +3915,9 @@ export default function Home() {
         setWritingToolsStorageStatus(
           result.conflictCount > 0
             ? "Merged safely; conflicts preserved"
-            : "Saved in OneDrive folder",
+            : webEdition
+              ? "Local changes not published"
+              : "Saved in OneDrive folder",
         );
         if (result.conflictCount > 0) {
           setSyncConflictNotice(result.message);
@@ -3727,9 +3926,13 @@ export default function Home() {
         void refreshSharedLibraryRef.current?.();
       })
       .catch(() => {
-        setWritingToolsStorageStatus("Browser backup only");
+        setWritingToolsStorageStatus(
+          webEdition ? "Saved in this browser" : "Browser backup only",
+        );
         setToast(
-          "Writing tool saved in browser; shared copy needs the launcher",
+          webEdition
+            ? "Writing tool saved in this browser"
+            : "Writing tool saved in browser; shared copy needs the launcher",
         );
       });
   }
@@ -3897,7 +4100,12 @@ export default function Home() {
       storageKeys.templatesUpdatedAt,
       String(updatedAt),
     );
-    setTemplateStorageStatus("Protecting templates...");
+    setTemplateStorageStatus(
+      webEdition ? "Local changes not published" : "Protecting templates...",
+    );
+    if (webEdition) {
+      setWebSharedLibraryStatus("Local changes are waiting to be published");
+    }
     void persistTemplatesToDisk(payload)
       .then((result) => {
         templateBaseRef.current = result.payload;
@@ -3919,7 +4127,9 @@ export default function Home() {
         setTemplateStorageStatus(
           result.conflictCount > 0
             ? "Merged safely; conflicts preserved"
-            : "Saved in OneDrive folder",
+            : webEdition
+              ? "Local changes not published"
+              : "Saved in OneDrive folder",
         );
         if (result.conflictCount > 0) {
           setSyncConflictNotice(result.message);
@@ -3928,9 +4138,121 @@ export default function Home() {
         void refreshSharedLibraryRef.current?.();
       })
       .catch(() => {
-        setTemplateStorageStatus("Browser backup only");
-        setToast("Template saved in browser; durable backup needs the launcher");
+        setTemplateStorageStatus(
+          webEdition ? "Saved in this browser" : "Browser backup only",
+        );
+        setToast(
+          webEdition
+            ? "Template saved in this browser"
+            : "Template saved in browser; durable backup needs the launcher",
+        );
       });
+  }
+
+  async function publishWebSharedLibrary(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!webEdition || webLibraryPublishing) return;
+    const token = githubPublishingToken.trim();
+    if (!token || !githubPublishConfirmed) {
+      setWebLibraryPublishError(
+        "Add the owner publishing key and confirm that the library contains no patient information.",
+      );
+      return;
+    }
+
+    setWebLibraryPublishing(true);
+    setWebLibraryPublishError("");
+    try {
+      const headers = {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2026-03-10",
+      };
+      const identityResponse = await fetch("https://api.github.com/user", {
+        headers,
+        cache: "no-store",
+      });
+      if (!identityResponse.ok) {
+        throw new Error("The GitHub publishing key was not accepted.");
+      }
+      const identity = (await identityResponse.json()) as { login?: string };
+      if (identity.login?.toLowerCase() !== webSharedLibraryOwner) {
+        throw new Error("Only the ScribeFlow repository owner can publish.");
+      }
+
+      const fileApiUrl = `https://api.github.com/repos/${webSharedLibraryOwner}/${webSharedLibraryRepository}/contents/${webSharedLibraryFile}`;
+      const currentFileResponse = await fetch(`${fileApiUrl}?ref=main`, {
+        headers,
+        cache: "no-store",
+      });
+      if (!currentFileResponse.ok) {
+        throw new Error("The shared library file could not be opened on GitHub.");
+      }
+      const currentFile = (await currentFileResponse.json()) as GitHubContentFile;
+      if (!currentFile.sha) {
+        throw new Error("GitHub did not return the current library version.");
+      }
+
+      const updatedAt = Date.now();
+      const sharedPayload: WebSharedLibraryPayload = {
+        version: 1,
+        updatedAt,
+        templates,
+        quicktexts,
+        vocabulary,
+      };
+      const updateResponse = await fetch(fileApiUrl, {
+        method: "PUT",
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: "Update shared ScribeFlow library",
+          content: encodeBase64Utf8(
+            `${JSON.stringify(sharedPayload, null, 2)}\n`,
+          ),
+          sha: currentFile.sha,
+          branch: "main",
+        }),
+      });
+      if (!updateResponse.ok) {
+        throw new Error(
+          updateResponse.status === 409
+            ? "The library changed elsewhere. Check for updates and try again."
+            : "GitHub could not publish the shared library.",
+        );
+      }
+
+      templatesUpdatedAtRef.current = updatedAt;
+      writingToolsUpdatedAtRef.current = updatedAt;
+      webSharedLibraryUpdatedAtRef.current = updatedAt;
+      window.localStorage.setItem(
+        storageKeys.templatesUpdatedAt,
+        String(updatedAt),
+      );
+      window.localStorage.setItem(
+        storageKeys.writingToolsUpdatedAt,
+        String(updatedAt),
+      );
+      setTemplateStorageStatus("Published to shared library");
+      setWritingToolsStorageStatus("Published to shared library");
+      setWebSharedLibraryStatus(
+        "Published · other computers will update shortly",
+      );
+      setGithubPublishingToken("");
+      setGithubPublishConfirmed(false);
+      setShowWebLibraryPublish(false);
+      setToast("Shared library published");
+    } catch (error) {
+      setWebLibraryPublishError(
+        error instanceof Error
+          ? error.message
+          : "The shared library could not be published.",
+      );
+    } finally {
+      setWebLibraryPublishing(false);
+    }
   }
 
   function openTemplateForm(template: Template | null = null) {
@@ -4526,6 +4848,40 @@ export default function Home() {
               +
             </button>
           </div>
+
+          {webEdition && (
+            <div className="web-shared-library-bar">
+              <div className="web-shared-library-copy">
+                <span className="web-shared-library-icon" aria-hidden="true">
+                  ↻
+                </span>
+                <span>
+                  <strong>Shared across computers</strong>
+                  <small>{webSharedLibraryStatus}</small>
+                </span>
+              </div>
+              <div className="web-shared-library-actions">
+                <button
+                  className="web-library-refresh-button"
+                  type="button"
+                  onClick={() => void refreshSharedLibraryRef.current?.(true)}
+                  disabled={syncRefreshing}
+                >
+                  {syncRefreshing ? "Checking…" : "Check"}
+                </button>
+                <button
+                  className="web-library-publish-button"
+                  type="button"
+                  onClick={() => {
+                    setWebLibraryPublishError("");
+                    setShowWebLibraryPublish(true);
+                  }}
+                >
+                  Publish
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="segmented-control" aria-label="Library view">
             <button
@@ -5402,6 +5758,111 @@ export default function Home() {
               </button>
               <button className="button primary" type="submit">
                 Prepare .hst
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {webEdition && showWebLibraryPublish && (
+        <div className="modal-backdrop" role="presentation">
+          <form
+            className="modal-card web-library-publish-modal"
+            onSubmit={publishWebSharedLibrary}
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">Shared library</p>
+                <h2>Publish for every computer</h2>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => {
+                  setShowWebLibraryPublish(false);
+                  setGithubPublishingToken("");
+                  setGithubPublishConfirmed(false);
+                  setWebLibraryPublishError("");
+                }}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="web-library-publish-intro">
+              This publishes only templates, Quicktext, and vocabulary to the
+              public ScribeFlow repository. Notes and imported documents are
+              never included.
+            </p>
+            <label>
+              Owner publishing key
+              <input
+                type="password"
+                value={githubPublishingToken}
+                onChange={(event) =>
+                  setGithubPublishingToken(event.target.value)
+                }
+                placeholder="Fine-grained GitHub token"
+                autoComplete="off"
+                spellCheck={false}
+                required
+              />
+            </label>
+            <p className="web-library-token-help">
+              Create a fine-grained token for only <code>scribeflow</code> with
+              repository <strong>Contents: read and write</strong>. The key is
+              held only for this publication and is immediately forgotten.
+              {" "}
+              <a
+                href="https://github.com/settings/personal-access-tokens/new"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Create publishing key
+              </a>
+            </p>
+            <label className="web-library-confirmation">
+              <input
+                type="checkbox"
+                checked={githubPublishConfirmed}
+                onChange={(event) =>
+                  setGithubPublishConfirmed(event.target.checked)
+                }
+                required
+              />
+              <span>
+                I confirmed these templates and writing tools contain no
+                patient names, identifiers, or other patient information.
+              </span>
+            </label>
+            {webLibraryPublishError && (
+              <p className="web-library-publish-error" role="alert">
+                {webLibraryPublishError}
+              </p>
+            )}
+            <div className="modal-actions">
+              <button
+                className="button subtle"
+                type="button"
+                onClick={() => {
+                  setShowWebLibraryPublish(false);
+                  setGithubPublishingToken("");
+                  setGithubPublishConfirmed(false);
+                  setWebLibraryPublishError("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={
+                  webLibraryPublishing ||
+                  !githubPublishingToken.trim() ||
+                  !githubPublishConfirmed
+                }
+              >
+                {webLibraryPublishing ? "Publishing…" : "Publish shared library"}
               </button>
             </div>
           </form>
