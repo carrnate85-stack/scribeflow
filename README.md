@@ -49,9 +49,11 @@ Chrome.
 
 ## Windows installer and computer transfers
 
-The GitHub repository contains source code and installer-building files only.
-It intentionally excludes templates, notes, PDFs, recordings, generated builds,
-Node modules, and speech-model files.
+The GitHub repository contains source code, installer-building files, and a
+deliberately public non-patient starter/fallback library for the web edition.
+It excludes patient notes, PDFs, recordings, local desktop templates, generated
+builds, Node modules, and speech-model files. Never put patient information in
+`public/shared-library.json` or any other repository file.
 
 Create a per-user Windows installer with:
 
@@ -88,21 +90,30 @@ browser storage are never included in the installer.
 Each normal ScribeFlow launch checks this public repository's latest Release.
 When a newer version is available, the launcher downloads both the installer
 and its SHA-256 file, verifies the package, applies the update, and then opens
-ScribeFlow. Installation is retried up to three times, the downloaded version
-is verified after replacement, and a failed replacement restores the previous
-working version. Update stages and errors are recorded under
+ScribeFlow. The ZIP and every payload file are checked against a complete,
+version-bound manifest before replacement. Installation is retried up to three
+times, the installed version and loopback health endpoint are verified, and a
+failed or interrupted replacement restores the last working version. Update,
+install, launch, and Whisper maintenance use coordinated single-instance locks
+and identity-checked process records. Installer output, update stages, and
+errors are recorded under
 `%LOCALAPPDATA%\ScribeFlow\runtime` and appear in the in-app Shared library
-panel. If GitHub is unavailable, the update is skipped and the installed
-version opens normally.
+panel. Only the newest verified update archive is retained; older update trees
+are removed after a healthy install. If GitHub is unavailable, the update is
+skipped and the installed version opens normally.
 
-Owner-created `agent/*` pull requests are built and tested automatically. A
-verified update is marked ready and squash-merged without requiring a manual
-button click. App changes must increase the version in `package.json`.
+Owner-created `agent/*` pull requests are linted, type-checked, audited, built,
+and tested with read-only credentials. A separate trusted workflow that never
+checks out or runs proposed code merges the exact validated commit. Workflow
+changes intentionally require a privileged review instead of being
+auto-merged. Release changes must increase the version in `package.json`.
 
 Every merged app version on `main` automatically receives its matching Git tag,
-verified Windows installer, SHA-256 file, and GitHub Release. This is the
-Release checked by installed desktop shortcuts, so a pushed update cannot remain
-stranded in an unpublished draft pull request.
+verified Windows installer, SHA-256 file, build-provenance attestation, and
+immutable GitHub Release. Building runs without publish credentials; a separate
+publish job rechecks the checksum and never overwrites a different release
+asset. This is the Release checked by installed desktop shortcuts, so a pushed
+update cannot remain stranded in an unpublished draft pull request.
 
 Native Whisper remains a separate local component even though its controls are
 built into ScribeFlow. This keeps large model files out of GitHub and out of app
@@ -111,7 +122,11 @@ expected by the current app. When a future verified runtime or model update is
 available, the app keeps dictation working, shows a persistent notice, and asks
 **Update Whisper?** with **Yes, update Whisper** and **No, not now** choices.
 Choosing **No** closes the prompt for that session while leaving the update
-button visible. For troubleshooting, the same verified installer can be run
+button visible. New Whisper files must answer their random private health route
+before their manifest becomes current; the prior runtime and model are retained
+until that succeeds. A damaged or unsupported Whisper install shows a repair
+notice but never prevents the main note editor from opening. For troubleshooting,
+the same verified installer can be run
 directly:
 
 ```powershell
@@ -121,11 +136,14 @@ powershell -ExecutionPolicy Bypass -File scripts\install-native-whisper.ps1
 The runtime, weights, logs, caches, and temporary service state are kept
 outside OneDrive under
 `%LOCALAPPDATA%\ScribeFlow\native-whisper`. The native inference service binds
-only to `127.0.0.1:3002`; the local document bridge remains on
-`127.0.0.1:3001`. Audio is submitted as an in-memory WAV buffer and the native
-server's file converter is disabled, so dictation is not written to disk.
-Runtime model loading has no remote fallback, and the app response has a
-content security policy that blocks other outbound connections.
+only to `127.0.0.1:3002` behind a new random 256-bit request path each time it
+starts. The browser never receives that path or connects to port 3002; it uses
+the origin-checked local bridge on `127.0.0.1:3001`, which relays only the
+health check and in-memory transcription request. Audio is submitted as an
+in-memory WAV buffer and the native server's file converter is disabled, so
+dictation is not written to disk. Runtime model loading has no remote fallback,
+and the app response has a content security policy that blocks other outbound
+connections.
 
 When PDF auto-delete is checked, the app first asks the browser to remove the
 selected file handle. If that browser operation is unavailable, the loopback
@@ -163,21 +181,48 @@ Full base, local, remote, and merged copies are retained under the corresponding
 local OneDrive `Conflicts` folder instead of silently overwriting data.
 Templates, Quicktext, and vocabulary all use the single
 `OneDrive\Documents\ScribeFlow` root; no second local Documents path is used
-when OneDrive is available. The selected dictation engine and microphone remain
-local to each PC. Do not place patient identifiers in reusable configuration
-items. Status wording such as **Saved in OneDrive folder** confirms the local
-file write only; Microsoft OneDrive controls and reports the separate cloud
-upload state.
+when OneDrive is available. ScribeFlow first respects Windows' configured
+Documents location; if it must choose between additional OneDrive roots, a
+business account is preferred over a personal account. The selection is saved
+and displayed so it cannot silently change. The selected dictation engine and
+microphone remain local to each PC. Do not place patient identifiers in
+reusable configuration items. Status wording such as **Saved in OneDrive
+folder** confirms the local file write only; Microsoft OneDrive controls and
+reports the separate cloud upload state.
 
 The GitHub Pages web edition automatically shares only templates, Quicktext,
-and vocabulary through its public-by-link MantleDB library. Saving one of those
-items replaces the shared copy immediately, so another computer receives it
-when the site opens or regains focus. Clinical note text, pasted intake or HST
-text, PDF contents, PDF measurements, and recordings are not included in that
-payload. The repository also keeps a non-patient fallback copy, and a scheduled
-workflow refreshes the shared library before MantleDB's inactivity window.
-Never place patient identifiers or protected health information in templates,
-Quicktext, or vocabulary.
+and vocabulary through a claimed MantleDB library. The reusable library is
+publicly readable, but saving requires the private owner key stored only in
+that browser. A one-time setup link can put the key into a new browser; the key
+is removed from the address immediately and is sent only with library writes.
+Never publish or commit that setup link.
+
+The site checks for changes when it opens, when it regains focus, on request,
+and at a throttled five-minute interval. Each browser writes a separate public
+library record, protected by the private owner write key, so one PC cannot
+replace another PC's full library. Item-level versions and deletion tombstones
+are merged deterministically; ambiguous edits are preserved as visible conflict
+copies. The original single library record remains only as a compatibility
+cache. During the transition, a write from an already-open older ScribeFlow tab
+is fingerprinted and imported once: additions are kept and competing edits are
+preserved as conflict copies instead of allowing the older full record to erase
+newer v2 items. V2-written fingerprints make the scheduled retention rewrite a
+no-op rather than a new edit. Same-browser writes are serialized with the
+browser's Web Locks API. A failed save remains marked as unsynced and cannot be
+replaced by an older fallback. The browser retains ten recovery snapshots and
+can export or restore the reusable library. Remote
+template HTML is reduced to a small inert formatting allowlist before display
+or clipboard use. The scheduled retention refresh uses the private write key,
+validates the complete current payload, and never substitutes a stale fallback
+after a failed read.
+
+Clinical note text, pasted intake or HST text, PDF contents, PDF measurements,
+and recordings are not included in the shared payload and are not visible to
+another person visiting the site. The web note editor disables browser
+spellcheck and common writing-assistant integrations, but Dragon, browser
+extensions, clipboard history/cloud sync, and other software remain governed
+by their own privacy settings. Never place patient identifiers or protected
+health information in templates, Quicktext, or vocabulary.
 
 Only use OneDrive for protected health information when that account and your
 organization's configuration are approved for that purpose.

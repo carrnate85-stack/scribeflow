@@ -188,7 +188,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /resampleAudio/);
   assert.match(page, /encodePcm16Wav/);
   assert.match(page, /new Blob\(\[wavBuffer\], \{ type: "audio\/wav" \}\)/);
-  assert.match(page, /http:\/\/127\.0\.0\.1:3002\/inference/);
+  assert.match(page, /http:\/\/127\.0\.0\.1:3001\/whisper\/inference/);
   assert.match(page, /formData\.append\("beam_size", "5"\)/);
   assert.match(page, /Preferred specialty vocabulary/);
   assert.match(page, /wavBytes\.fill\(0\)/);
@@ -415,7 +415,8 @@ test("includes quicktext, template, and local-save workflows", async () => {
     /env\.localModelPath = "http:\/\/127\.0\.0\.1:3001\/models\/"/,
   );
   assert.match(whisperWorker, /env\.useBrowserCache = false/);
-  assert.match(whisperWorker, /env\.backends\.onnx\.wasm\.wasmPaths = "\/wasm\/"/);
+  assert.match(whisperWorker, /const onnxWasmEnvironment = env\.backends\.onnx\.wasm/);
+  assert.match(whisperWorker, /onnxWasmEnvironment\.wasmPaths = "\/wasm\/"/);
   assert.match(whisperWorker, /device: "webgpu"/);
   assert.match(whisperWorker, /encoder_model: "q4f16"/);
   assert.match(whisperWorker, /decoder_model_merged: "q4f16"/);
@@ -512,14 +513,14 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(localModelServer, /!url\.pathname\.startsWith\("\/models\/"\)/);
   assert.match(
     worker,
-    /"connect-src 'self' http:\/\/127\.0\.0\.1:3001 http:\/\/127\.0\.0\.1:3002"/,
+    /"connect-src 'self' http:\/\/127\.0\.0\.1:3001"/,
   );
   assert.match(worker, /"object-src 'none'"/);
   assert.match(launcher, /\$selectedPort = 3000/);
   assert.match(launcher, /\$modelPort = 3001/);
   assert.match(launcher, /\$nativeWhisperPort = 3002/);
   assert.match(launcher, /\$env:LOCALAPPDATA/);
-  assert.match(launcher, /Get-ScribeFlowDocumentsRoot/);
+  assert.match(launcher, /Get-ScribeFlowDocumentsSelection/);
   assert.match(
     launcher,
     /\$env:SCRIBEFLOW_DOCUMENTS_ROOT = \$documentsRoot/,
@@ -534,7 +535,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(launcher, /portable-web-server\.mjs/);
   assert.match(launcher, /portableNodeDirectory/);
   assert.match(launcher, /Join-Path \$portableNodeDirectory "node\.exe"/);
-  assert.match(launcher, /http:\/\/127\.0\.0\.1:\$Port\/health/);
+  assert.match(launcher, /http:\/\/127\.0\.0\.1:\$modelPort\/health/);
   assert.match(
     launcher,
     /http:\/\/127\.0\.0\.1:\$Port\/\?launch=\$launchToken/,
@@ -563,15 +564,15 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installer, /whisper-release\.json/);
   assert.match(installer, /document-storage-utils\.mjs/);
   assert.match(installer, /library-sync-utils\.mjs/);
-  assert.match(installer, /Restoring the previous ScribeFlow version/);
+  assert.match(installer, /Restored the previous ScribeFlow version after failure/);
   assert.match(installer, /verifiedInstalledVersion/);
-  assert.match(installer, /\$desktopShortcut\.IconLocation = "\$installedIcon,0"/);
-  assert.match(installer, /\$startMenuShortcut\.IconLocation = "\$installedIcon,0"/);
+  assert.match(installer, /New-ScribeFlowShortcut/);
+  assert.match(installer, /\$shortcut\.IconLocation = "\$IconLocation,0"/);
   assert.match(installer, /GetFolderPath\("Startup"\)/);
   assert.match(installer, /ScribeFlow Background\.lnk/);
   assert.match(
     installer,
-    /\$startupShortcut\.Arguments[\s\S]*-NoBrowser[\s\S]*launch-scribeflow\.ps1/,
+    /ScribeFlow Background\.lnk[\s\S]*launch-scribeflow\.ps1/,
   );
   assert.match(installer, /http:\/\/127\.0\.0\.1:3000/);
   assert.match(uninstaller, /ScribeFlow Background\.lnk/);
@@ -590,10 +591,10 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(appUpdater, /update-status\.json/);
   assert.match(appUpdater, /Installed version verification failed/);
   assert.match(appUpdater, /Local\\ScribeFlowUpdater/);
-  assert.match(appUpdater, /WaitOne\(\[TimeSpan\]::FromMinutes\(3\)\)/);
+  assert.match(appUpdater, /WaitOne\(\[TimeSpan\]::FromMinutes\(5\)\)/);
   assert.match(appUpdater, /ReleaseMutex\(\)/);
   assert.match(appUpdater, /Remove-ScribeFlowUpdateDirectory/);
-  assert.match(appUpdater, /attempt -le 5/);
+  assert.match(appUpdater, /--retry-all-errors/);
   assert.match(appUpdater, /Another ScribeFlow update is already running/);
   assert.match(installerWorkflow, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
   assert.doesNotMatch(installerBuilder, /templates\.json|Downloads\\.*\.pdf/);
@@ -627,7 +628,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.25"/);
+  assert.match(JSON.parse(packageJson).version, /^\d+\.\d+\.\d+$/);
 });
 
 test("extracts past medical history only through the next section", async () => {

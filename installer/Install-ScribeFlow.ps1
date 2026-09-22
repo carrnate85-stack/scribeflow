@@ -14,9 +14,56 @@ $stagingRoot = Join-Path $programsRoot "ScribeFlow.installing"
 $backupRoot = Join-Path $programsRoot "ScribeFlow.previous"
 $settingsRoot = Join-Path $env:LOCALAPPDATA "ScribeFlow"
 $runtimeStateRoot = Join-Path $settingsRoot "runtime"
+$installLogPath = Join-Path $runtimeStateRoot "install.log"
+$installTransactionPath = Join-Path $runtimeStateRoot "install-transaction.json"
+$installTransactionTempPath = "$installTransactionPath.writing"
+$lifecycleScript = Join-Path $payloadRoot "scripts\scribeflow-lifecycle.ps1"
 $nodePath = Join-Path $payloadRoot "runtime\node\node.exe"
 $launcherPath = Join-Path $payloadRoot "Launch ScribeFlow.cmd"
 $versionPath = Join-Path $payloadRoot "app-version.json"
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScribeFlow"
+$lifecycleMutex = $null
+$hadPreviousInstall = $false
+$activatedNewInstall = $false
+$installationSucceeded = $false
+
+function Write-InstallLog {
+    param([string]$Message)
+
+    New-Item -ItemType Directory -Path $runtimeStateRoot -Force | Out-Null
+    Add-Content -LiteralPath $installLogPath -Value (
+        "[{0}] {1}" -f (Get-Date).ToString("o"), $Message
+    ) -Encoding UTF8
+}
+
+function Set-ScribeFlowInstallTransaction {
+    param(
+        [string]$Version,
+        [bool]$HadPreviousInstall
+    )
+
+    New-Item -ItemType Directory -Path $runtimeStateRoot -Force | Out-Null
+    [ordered]@{
+        schemaVersion = 1
+        version = $Version
+        hadPreviousInstall = $HadPreviousInstall
+        state = "pending-health-verification"
+        createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    } |
+        ConvertTo-Json |
+        Set-Content -LiteralPath $installTransactionTempPath -Encoding UTF8
+    Move-Item `
+        -LiteralPath $installTransactionTempPath `
+        -Destination $installTransactionPath `
+        -Force
+}
+
+function Clear-ScribeFlowInstallTransaction {
+    Remove-Item `
+        -LiteralPath $installTransactionPath, $installTransactionTempPath `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
 
 function Assert-SafeInstallPath {
     param([string]$Path)
@@ -38,61 +85,145 @@ function Assert-SafeInstallPath {
     }
 }
 
-function Stop-ScribeFlowProcess {
-    param([string]$PidFile)
+function Stop-ScribeFlowService {
+    param(
+        [string]$PidFile,
+        [string]$LegacyExpectedPath = "",
+        [string]$LegacyExpectedRoot = ""
+    )
 
-    if (-not (Test-Path -LiteralPath $PidFile)) {
+    if (-not (Test-Path -LiteralPath $PidFile -PathType Leaf)) {
         return
     }
+    $rawPid = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($rawPid -match "^\d+$") {
+        try {
+            $process = Get-Process -Id ([int]$rawPid) -ErrorAction SilentlyContinue
+            if ($process) {
+                $actualPath = [IO.Path]::GetFullPath($process.Path)
+                $matchesPath = $LegacyExpectedPath -and $actualPath.Equals(
+                    [IO.Path]::GetFullPath($LegacyExpectedPath),
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+                $matchesRoot = $false
+                if ($LegacyExpectedRoot) {
+                    $resolvedRoot = [IO.Path]::GetFullPath($LegacyExpectedRoot)
+                    $matchesRoot = $actualPath.StartsWith(
+                        "$resolvedRoot$([IO.Path]::DirectorySeparatorChar)",
+                        [StringComparison]::OrdinalIgnoreCase
+                    )
+                }
+                if ($matchesPath -or $matchesRoot) {
+                    Stop-Process -Id $process.Id -Force -ErrorAction Stop
+                    $null = $process.WaitForExit(8000)
+                }
+            }
+        }
+        catch {
+            Write-InstallLog "Could not stop a verified legacy service: $($_.Exception.Message)"
+        }
+        finally {
+            Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+        }
+        return
+    }
+    $null = Stop-ScribeFlowTrackedProcess -PidFile $PidFile
+}
+
+function Test-InstalledScribeFlowHealth {
+    param(
+        [string]$ExpectedVersion,
+        [int]$TimeoutSeconds = 55
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            $response = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:3000/__health" `
+                -TimeoutSec 3
+            if (
+                $response.ready -eq $true -and
+                [string]$response.service -eq "ScribeFlow" -and
+                [string]$response.version -eq $ExpectedVersion
+            ) {
+                $page = Invoke-WebRequest `
+                    -Uri "http://127.0.0.1:3000/" `
+                    -UseBasicParsing `
+                    -TimeoutSec 4
+                if ($page.StatusCode -eq 200 -and $page.Content -match "ScribeFlow") {
+                    return $true
+                }
+            }
+        }
+        catch {
+            # The new service may still be starting.
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    while ((Get-Date) -lt $deadline)
+    return $false
+}
+
+function New-ScribeFlowShortcut {
+    param(
+        [object]$Shell,
+        [string]$Path,
+        [string]$TargetPath,
+        [string]$WorkingDirectory,
+        [string]$Description,
+        [string]$IconLocation,
+        [string]$Arguments = ""
+    )
+
+    $shortcut = $Shell.CreateShortcut($Path)
+    $shortcut.TargetPath = $TargetPath
+    $shortcut.WorkingDirectory = $WorkingDirectory
+    $shortcut.Description = $Description
+    $shortcut.IconLocation = "$IconLocation,0"
+    if ($Arguments) {
+        $shortcut.Arguments = $Arguments
+    }
+    $shortcut.Save()
+}
+
+function Invoke-ScribeFlowBestEffortShellIntegration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Operation
+    )
+
     try {
-        $processId = [int](Get-Content -LiteralPath $PidFile -Raw)
-        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-        if ($process) {
-            Stop-Process -Id $processId -Force
-            $process.WaitForExit(5000)
+        & $Operation
+        try {
+            Write-InstallLog "Configured $Name."
+        }
+        catch {
+            # Shell integration already succeeded; logging must not undo it.
         }
     }
     catch {
-        # A stale PID file must not prevent an otherwise safe upgrade.
-    }
-}
-
-function Invoke-WithRetry {
-    param(
-        [scriptblock]$Operation,
-        [string]$Description,
-        [int]$Attempts = 4
-    )
-
-    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        $integrationFailure = $_.Exception.Message
         try {
-            & $Operation
-            return
+            Write-Warning (
+                (
+                    "ScribeFlow installed successfully, but Windows would not allow {0}. " +
+                    "The app remains available at http://127.0.0.1:3000."
+                ) -f $Name
+            ) -WarningAction Continue
         }
         catch {
-            if ($attempt -eq $Attempts) {
-                throw "$Description failed after $Attempts attempts: $($_.Exception.Message)"
-            }
-            Start-Sleep -Milliseconds (500 * $attempt)
+            # A host that rejects warnings must not make integration fatal.
+        }
+        try {
+            Write-InstallLog "$Name failed: $integrationFailure"
+        }
+        catch {
+            # Optional Windows integration and its logging are both best-effort.
         }
     }
-}
-
-function Get-ScribeFlowDesktop {
-    $knownDesktop = [Environment]::GetFolderPath("Desktop")
-    $candidates = @(
-        $knownDesktop,
-        (Join-Path $env:USERPROFILE "OneDrive\Desktop"),
-        (Join-Path $env:USERPROFILE "Desktop")
-    ) | Where-Object { $_ }
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate -PathType Container) {
-            return [IO.Path]::GetFullPath($candidate)
-        }
-    }
-
-    throw "Windows Desktop folder could not be located."
 }
 
 foreach ($requiredPath in @(
@@ -100,8 +231,12 @@ foreach ($requiredPath in @(
     $nodePath,
     $launcherPath,
     $versionPath,
+    $lifecycleScript,
+    (Join-Path $packageRoot "package-manifest.json"),
     (Join-Path $payloadRoot "scripts\start-scribeflow.ps1"),
     (Join-Path $payloadRoot "scripts\update-scribeflow.ps1"),
+    (Join-Path $payloadRoot "scripts\launch-scribeflow.ps1"),
+    (Join-Path $payloadRoot "scripts\uninstall-scribeflow.ps1"),
     (Join-Path $payloadRoot "scripts\install-native-whisper.ps1"),
     (Join-Path $payloadRoot "scripts\whisper-release.json"),
     (Join-Path $payloadRoot "scripts\whisper-release-utils.mjs"),
@@ -116,178 +251,284 @@ foreach ($requiredPath in @(
     }
 }
 
-$appVersion = try {
-    [string](
-        (Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json).version
-    )
-}
-catch {
-    throw "The installer version information is invalid."
-}
-if ($appVersion -notmatch "^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$") {
-    throw "The installer version information is invalid."
-}
+. $lifecycleScript
+$manifest = Test-ScribeFlowPayloadManifest -PackageRoot $packageRoot
+$appVersion = [string]$manifest.version
 
 Assert-SafeInstallPath -Path $installRoot
 Assert-SafeInstallPath -Path $stagingRoot
 Assert-SafeInstallPath -Path $backupRoot
 
-Stop-ScribeFlowProcess -PidFile (Join-Path $runtimeStateRoot "server.pid")
-Stop-ScribeFlowProcess -PidFile (Join-Path $runtimeStateRoot "model-server.pid")
-Stop-ScribeFlowProcess -PidFile (
-    Join-Path $runtimeStateRoot "native-whisper\server.pid"
-)
-Start-Sleep -Milliseconds 400
-
-New-Item -ItemType Directory -Path $programsRoot -Force | Out-Null
-if (Test-Path -LiteralPath $stagingRoot) {
-    Remove-Item -LiteralPath $stagingRoot -Recurse -Force
-}
-
-Write-Host "Installing ScribeFlow locally..." -ForegroundColor Cyan
-Copy-Item -LiteralPath $payloadRoot -Destination $stagingRoot -Recurse -Force
-
-if (Test-Path -LiteralPath $backupRoot) {
-    Invoke-WithRetry -Description "Removing the previous rollback copy" `
-        -Operation {
-            Remove-Item -LiteralPath $backupRoot -Recurse -Force
-        }
-}
-$hadPreviousInstall = Test-Path -LiteralPath $installRoot
-if (Test-Path -LiteralPath $installRoot) {
-    Invoke-WithRetry -Description "Preparing the installed app for upgrade" `
-        -Operation {
-            Move-Item -LiteralPath $installRoot -Destination $backupRoot
-        }
-}
-
 try {
-    Invoke-WithRetry -Description "Activating the new ScribeFlow version" `
-        -Operation {
-            Move-Item -LiteralPath $stagingRoot -Destination $installRoot
-        }
-    $installedVersionPath = Join-Path $installRoot "app-version.json"
-    if (-not (Test-Path -LiteralPath $installedVersionPath -PathType Leaf)) {
-        throw "The installed version marker is missing."
+    $lifecycleMutex = Enter-ScribeFlowMutex `
+        -Name $script:ScribeFlowLifecycleMutexName `
+        -Timeout ([TimeSpan]::FromMinutes(8))
+    Write-InstallLog "Beginning verified installation of ScribeFlow $appVersion."
+    New-Item -ItemType Directory -Path $programsRoot -Force | Out-Null
+
+    $installedNode = Join-Path $installRoot "runtime\node\node.exe"
+    $nativeWhisperRoot = Join-Path $settingsRoot "native-whisper"
+    Stop-ScribeFlowService `
+        -PidFile (Join-Path $runtimeStateRoot "server.pid") `
+        -LegacyExpectedPath $installedNode
+    Stop-ScribeFlowService `
+        -PidFile (Join-Path $runtimeStateRoot "model-server.pid") `
+        -LegacyExpectedPath $installedNode
+    Stop-ScribeFlowService `
+        -PidFile (Join-Path $runtimeStateRoot "native-whisper\server.pid") `
+        -LegacyExpectedRoot $nativeWhisperRoot
+
+    # An activated version is not trusted until its loopback health check has
+    # completed. If power was lost at any point in that window, restore the
+    # rollback copy before another update is allowed to replace it.
+    $transactionSource = if (Test-Path -LiteralPath $installTransactionPath) {
+        $installTransactionPath
     }
+    elseif (Test-Path -LiteralPath $installTransactionTempPath) {
+        $installTransactionTempPath
+    }
+    else {
+        $null
+    }
+    if ($transactionSource) {
+        $pendingHadPreviousInstall = Test-Path `
+            -LiteralPath $backupRoot `
+            -PathType Container
+        try {
+            $pendingTransaction = Get-Content `
+                -LiteralPath $transactionSource `
+                -Raw |
+                ConvertFrom-Json
+            if ($null -ne $pendingTransaction.hadPreviousInstall) {
+                $pendingHadPreviousInstall = [bool]$pendingTransaction.hadPreviousInstall
+            }
+        }
+        catch {
+            Write-InstallLog "The interrupted-install marker was damaged; recovery will use the available rollback copy."
+        }
+
+        if (Test-Path -LiteralPath $installRoot) {
+            Remove-ScribeFlowPathWithRetry -Path $installRoot
+        }
+        if (Test-Path -LiteralPath $backupRoot -PathType Container) {
+            Move-Item -LiteralPath $backupRoot -Destination $installRoot
+            Write-InstallLog "Restored the last-known-good installation after an interrupted unverified activation."
+        }
+        elseif ($pendingHadPreviousInstall) {
+            Write-InstallLog "The interrupted activation had no rollback copy; reinstalling from the verified package."
+        }
+        else {
+            Write-InstallLog "Removed an interrupted first installation before retrying."
+        }
+        Clear-ScribeFlowInstallTransaction
+    }
+    elseif (
+        -not (Test-Path -LiteralPath $installRoot) -and
+        (Test-Path -LiteralPath $backupRoot -PathType Container)
+    ) {
+        # Transition support for installations created before transaction
+        # markers were introduced.
+        Move-Item -LiteralPath $backupRoot -Destination $installRoot
+        Write-InstallLog "Recovered the last-known-good installation after an interrupted update."
+    }
+    if (Test-Path -LiteralPath $stagingRoot) {
+        Remove-ScribeFlowPathWithRetry -Path $stagingRoot
+    }
+
+    Write-Host "Installing ScribeFlow locally..." -ForegroundColor Cyan
+    Copy-Item -LiteralPath $payloadRoot -Destination $stagingRoot -Recurse -Force
+    $stagedVersion = [string](
+        (Get-Content -LiteralPath (Join-Path $stagingRoot "app-version.json") -Raw |
+            ConvertFrom-Json).version
+    )
+    if ($stagedVersion -ne $appVersion) {
+        throw "The staged application version did not match the verified package."
+    }
+
+    $hadPreviousInstall = Test-Path -LiteralPath $installRoot -PathType Container
+    if (Test-Path -LiteralPath $backupRoot) {
+        Remove-ScribeFlowPathWithRetry -Path $backupRoot
+    }
+    if ($hadPreviousInstall) {
+        Move-Item -LiteralPath $installRoot -Destination $backupRoot
+        Write-InstallLog "Saved the prior installation as the last-known-good rollback copy."
+    }
+    Set-ScribeFlowInstallTransaction `
+        -Version $appVersion `
+        -HadPreviousInstall $hadPreviousInstall
+    Move-Item -LiteralPath $stagingRoot -Destination $installRoot
+    $activatedNewInstall = $true
+
     $verifiedInstalledVersion = [string](
-        (Get-Content -LiteralPath $installedVersionPath -Raw |
+        (Get-Content -LiteralPath (Join-Path $installRoot "app-version.json") -Raw |
             ConvertFrom-Json).version
     )
     if ($verifiedInstalledVersion -ne $appVersion) {
         throw "The installed version did not match the downloaded release."
     }
 
-$installedLauncher = Join-Path $installRoot "Launch ScribeFlow.cmd"
-$installedIcon = Join-Path $installRoot "assets\ScribeFlow.ico"
-$shell = New-Object -ComObject WScript.Shell
-$desktopShortcut = $shell.CreateShortcut(
-    (Join-Path (Get-ScribeFlowDesktop) "ScribeFlow.lnk")
-)
-$desktopShortcut.TargetPath = $installedLauncher
-$desktopShortcut.WorkingDirectory = $installRoot
-$desktopShortcut.Description = "Local-only clinical dictation"
-$desktopShortcut.IconLocation = "$installedIcon,0"
-$desktopShortcut.Save()
+    $installedLauncher = Join-Path $installRoot "Launch ScribeFlow.cmd"
+    $installedStartScript = Join-Path $installRoot "scripts\start-scribeflow.ps1"
+    $installedPowerShell = Join-Path $env:SystemRoot `
+        "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $installedIcon = Join-Path $installRoot "assets\ScribeFlow.ico"
 
-$startMenuFolder = Join-Path (
-    [Environment]::GetFolderPath("StartMenu")
-) "Programs\ScribeFlow"
-New-Item -ItemType Directory -Path $startMenuFolder -Force | Out-Null
-$startMenuShortcut = $shell.CreateShortcut(
-    (Join-Path $startMenuFolder "ScribeFlow.lnk")
-)
-$startMenuShortcut.TargetPath = $installedLauncher
-$startMenuShortcut.WorkingDirectory = $installRoot
-$startMenuShortcut.Description = "Local-only clinical dictation"
-$startMenuShortcut.IconLocation = "$installedIcon,0"
-$startMenuShortcut.Save()
+    # A file swap alone is not success. Start the exact installed payload and
+    # keep the rollback copy until its real loopback endpoint is healthy.
+    & (Join-Path $installRoot "scripts\launch-scribeflow.ps1") `
+        -NoBrowser `
+        -SkipLifecycleLock `
+        -SkipNativeWhisperStart `
+        -ExpectedVersion $appVersion
+    if (-not (Test-InstalledScribeFlowHealth -ExpectedVersion $appVersion)) {
+        throw "The new ScribeFlow version did not pass its local startup health check."
+    }
 
-# Start only ScribeFlow's loopback services at Windows sign-in. The normal
-# desktop/Start Menu launcher remains responsible for update checks and for
-# opening the browser, while a browser bookmark can go straight to port 3000.
-$startupFolder = [Environment]::GetFolderPath("Startup")
-if (-not $startupFolder) {
-    $startupFolder = Join-Path $env:APPDATA `
-        "Microsoft\Windows\Start Menu\Programs\Startup"
-}
-New-Item -ItemType Directory -Path $startupFolder -Force | Out-Null
-$startupShortcut = $shell.CreateShortcut(
-    (Join-Path $startupFolder "ScribeFlow Background.lnk")
-)
-$startupShortcut.TargetPath = Join-Path $env:SystemRoot `
-    "System32\WindowsPowerShell\v1.0\powershell.exe"
-$startupShortcut.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -NoBrowser' -f (
-    Join-Path $installRoot "scripts\launch-scribeflow.ps1"
-)
-$startupShortcut.WorkingDirectory = $installRoot
-$startupShortcut.Description = "Start ScribeFlow locally without opening a browser"
-$startupShortcut.IconLocation = "$installedIcon,0"
-$startupShortcut.Save()
+    Clear-ScribeFlowInstallTransaction
+    $installationSucceeded = $true
+    Write-InstallLog "ScribeFlow $appVersion passed its loopback health check."
 
-$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScribeFlow"
-New-Item -Path $uninstallKey -Force | Out-Null
-Set-ItemProperty -Path $uninstallKey -Name DisplayName -Value "ScribeFlow"
-Set-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $appVersion
-Set-ItemProperty -Path $uninstallKey -Name Publisher -Value "ScribeFlow"
-Set-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $installRoot
-Set-ItemProperty -Path $uninstallKey -Name UninstallString -Value (
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f (
-        Join-Path $installRoot "scripts\uninstall-scribeflow.ps1"
-    )
-)
-New-ItemProperty -Path $uninstallKey -Name NoModify -PropertyType DWord `
-    -Value 1 -Force | Out-Null
-New-ItemProperty -Path $uninstallKey -Name NoRepair -PropertyType DWord `
-    -Value 1 -Force | Out-Null
+    # Windows shell metadata is created only after the installed app is proven
+    # healthy. Each operation is independent and optional: folder redirection,
+    # registry policy, or COM restrictions must not roll back a working app.
+    Invoke-ScribeFlowBestEffortShellIntegration `
+        -Name "the Start menu shortcut" `
+        -Operation {
+            $startMenuRoot = [Environment]::GetFolderPath("StartMenu")
+            if (-not $startMenuRoot) {
+                throw "Windows did not report a Start menu folder."
+            }
+            $startMenuFolder = Join-Path $startMenuRoot "Programs\ScribeFlow"
+            New-Item -ItemType Directory -Path $startMenuFolder -Force |
+                Out-Null
+            $shell = New-Object -ComObject WScript.Shell
+            New-ScribeFlowShortcut `
+                -Shell $shell `
+                -Path (Join-Path $startMenuFolder "ScribeFlow.lnk") `
+                -TargetPath $installedPowerShell `
+                -WorkingDirectory $installRoot `
+                -Description "Private local clinical documentation" `
+                -IconLocation $installedIcon `
+                -Arguments ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $installedStartScript)
+        }
+
+    Invoke-ScribeFlowBestEffortShellIntegration `
+        -Name "the optional Desktop shortcut" `
+        -Operation {
+            $desktopRoot = [Environment]::GetFolderPath("Desktop")
+            if (-not $desktopRoot) {
+                throw "Windows did not report a Desktop folder."
+            }
+            $shell = New-Object -ComObject WScript.Shell
+            New-ScribeFlowShortcut `
+                -Shell $shell `
+                -Path (Join-Path $desktopRoot "ScribeFlow.lnk") `
+                -TargetPath $installedPowerShell `
+                -WorkingDirectory $installRoot `
+                -Description "Private local clinical documentation" `
+                -IconLocation $installedIcon `
+                -Arguments ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $installedStartScript)
+        }
+
+    Invoke-ScribeFlowBestEffortShellIntegration `
+        -Name "the Windows startup shortcut" `
+        -Operation {
+            $startupFolder = [Environment]::GetFolderPath("Startup")
+            if (-not $startupFolder) {
+                $startupFolder = Join-Path $env:APPDATA `
+                    "Microsoft\Windows\Start Menu\Programs\Startup"
+            }
+            New-Item -ItemType Directory -Path $startupFolder -Force |
+                Out-Null
+            $shell = New-Object -ComObject WScript.Shell
+            New-ScribeFlowShortcut `
+                -Shell $shell `
+                -Path (Join-Path $startupFolder "ScribeFlow Background.lnk") `
+                -TargetPath (Join-Path $env:SystemRoot `
+                    "System32\WindowsPowerShell\v1.0\powershell.exe") `
+                -WorkingDirectory $installRoot `
+                -Description "Start ScribeFlow locally without opening a browser" `
+                -IconLocation $installedIcon `
+                -Arguments ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -NoBrowser' -f (
+                    Join-Path $installRoot "scripts\launch-scribeflow.ps1"
+                ))
+        }
+
+    Invoke-ScribeFlowBestEffortShellIntegration `
+        -Name "the Windows uninstall registration" `
+        -Operation {
+            New-Item -Path $uninstallKey -Force | Out-Null
+            Set-ItemProperty -Path $uninstallKey -Name DisplayName `
+                -Value "ScribeFlow"
+            Set-ItemProperty -Path $uninstallKey -Name DisplayVersion `
+                -Value $appVersion
+            Set-ItemProperty -Path $uninstallKey -Name Publisher `
+                -Value "ScribeFlow"
+            Set-ItemProperty -Path $uninstallKey -Name InstallLocation `
+                -Value $installRoot
+            Set-ItemProperty -Path $uninstallKey -Name UninstallString -Value (
+                'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f (
+                    Join-Path $installRoot "scripts\uninstall-scribeflow.ps1"
+                )
+            )
+            New-ItemProperty -Path $uninstallKey -Name NoModify `
+                -PropertyType DWord -Value 1 -Force | Out-Null
+            New-ItemProperty -Path $uninstallKey -Name NoRepair `
+                -PropertyType DWord -Value 1 -Force | Out-Null
+        }
 }
 catch {
     $installFailure = $_
-    if (Test-Path -LiteralPath $installRoot) {
-        Invoke-WithRetry -Description "Removing the incomplete installation" `
-            -Operation {
-                Remove-Item -LiteralPath $installRoot -Recurse -Force
-            }
+    Write-InstallLog "Installation failed: $($_.Exception.Message)"
+    if ($activatedNewInstall) {
+        Stop-ScribeFlowService -PidFile (Join-Path $runtimeStateRoot "server.pid")
+        Stop-ScribeFlowService -PidFile (Join-Path $runtimeStateRoot "model-server.pid")
+        Stop-ScribeFlowService -PidFile (
+            Join-Path $runtimeStateRoot "native-whisper\server.pid"
+        )
+        if (Test-Path -LiteralPath $installRoot) {
+            Remove-ScribeFlowPathWithRetry -Path $installRoot
+        }
     }
     if ($hadPreviousInstall -and (Test-Path -LiteralPath $backupRoot)) {
-        Invoke-WithRetry -Description "Restoring the previous ScribeFlow version" `
-            -Operation {
-                Move-Item -LiteralPath $backupRoot -Destination $installRoot
-            }
-        $restoredVersionPath = Join-Path $installRoot "app-version.json"
-        if (Test-Path -LiteralPath $restoredVersionPath) {
-            try {
-                $restoredVersion = [string](
-                    (Get-Content -LiteralPath $restoredVersionPath -Raw |
-                        ConvertFrom-Json).version
-                )
-                Set-ItemProperty -Path $uninstallKey -Name DisplayVersion `
-                    -Value $restoredVersion -ErrorAction SilentlyContinue
-            }
-            catch {
-                # Restoring the app matters more than refreshing display metadata.
-            }
+        Move-Item -LiteralPath $backupRoot -Destination $installRoot
+        Write-InstallLog "Restored the previous ScribeFlow version after failure."
+        try {
+            $restoredVersion = [string](
+                (Get-Content -LiteralPath (Join-Path $installRoot "app-version.json") -Raw |
+                    ConvertFrom-Json).version
+            )
+            Set-ItemProperty -Path $uninstallKey -Name DisplayVersion `
+                -Value $restoredVersion -ErrorAction SilentlyContinue
         }
+        catch {
+            # The files are restored even if Windows display metadata is stale.
+        }
+    }
+    if (Test-Path -LiteralPath $stagingRoot) {
+        Remove-ScribeFlowPathWithRetry -Path $stagingRoot
+    }
+    if (
+        (-not $hadPreviousInstall -and -not (Test-Path -LiteralPath $installRoot)) -or
+        ($hadPreviousInstall -and (Test-Path -LiteralPath $installRoot))
+    ) {
+        Clear-ScribeFlowInstallTransaction
     }
     throw $installFailure
 }
+finally {
+    Exit-ScribeFlowMutex -Mutex $lifecycleMutex
+}
 
-if (Test-Path -LiteralPath $backupRoot) {
-    try {
-        Invoke-WithRetry -Description "Removing the verified rollback copy" `
-            -Operation {
-                Remove-Item -LiteralPath $backupRoot -Recurse -Force
-            }
-    }
-    catch {
-        Write-Warning "ScribeFlow updated, but the rollback copy could not be removed."
-    }
+if (-not $installationSucceeded) {
+    throw "ScribeFlow installation did not complete."
 }
 
 Write-Host ""
 Write-Host "ScribeFlow was installed successfully." -ForegroundColor Green
 Write-Host "Templates sync through Documents\ScribeFlow when the app opens."
 Write-Host "Whisper is kept separately and can be installed inside ScribeFlow."
+Write-Host "The last working app version is retained for automatic rollback."
 Write-Host "No notes, PDFs, audio, templates, or patient data were included."
 Write-Host "ScribeFlow will start silently at Windows sign-in."
 Write-Host "Bookmark http://127.0.0.1:3000 to open it in your browser."

@@ -11,74 +11,133 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows-installer:
     runs-on: windows-latest
+    outputs:
+      release_exists: ${{ steps.version.outputs.release_exists }}
+      release_needed: ${{ steps.version.outputs.release_needed }}
+      tag: ${{ steps.version.outputs.tag }}
+      tag_exists: ${{ steps.version.outputs.tag_exists }}
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Resolve release version
+      - name: Resolve immutable release version
         id: version
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $package = Get-Content -LiteralPath "package.json" -Raw |
             ConvertFrom-Json
           $version = [string]$package.version
           if ($version -notmatch "^\d+\.\d+\.\d+$") {
-            throw "package.json must contain a release version such as 0.1.4."
+            throw "package.json must contain a release version such as 0.1.26."
           }
 
           $tag = "v$version"
           git fetch origin --tags --force
-          $existingTag = git tag --list $tag
-          $changedFiles = @(
-            git diff-tree --no-commit-id --name-only -r HEAD^ HEAD
-          )
+          $tagName = (git tag --list -- $tag | Select-Object -First 1)
+          $tagExists = -not [string]::IsNullOrWhiteSpace($tagName)
+          $tagCommit = if ($tagExists) {
+            (git rev-list -n 1 $tag).Trim()
+          }
+          else {
+            ""
+          }
+
+          $latestTag = @(
+            git tag --merged HEAD --sort=-version:refname |
+              Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
+          ) | Select-Object -First 1
+          $changedFiles = if ($latestTag) {
+            @(git diff --name-only "$latestTag..HEAD")
+          }
+          else {
+            @(git ls-files)
+          }
           $releaseFiles = @(
             $changedFiles | Where-Object {
-              $_ -match "^(app|assets|installer|scripts)/" -or
-              $_ -in @("package.json", "Launch ScribeFlow.cmd")
+              $_ -match "^(app|assets|build|db|drizzle|github-pages|installer|public|scripts|worker)/" -or
+              $_ -match "(^|/)(vite|next|postcss|tailwind|tsconfig)[^/]*\.(js|mjs|cjs|ts|json)$" -or
+              $_ -in @(
+                "package.json",
+                "pnpm-lock.yaml",
+                "pnpm-workspace.yaml",
+                "Launch ScribeFlow.cmd"
+              )
             }
           )
-          $releaseNeeded = $releaseFiles.Count -gt 0
 
-          if ($releaseNeeded -and $existingTag) {
-            $tagCommit = (git rev-list -n 1 $tag).Trim()
-            if ($tagCommit -ne $env:GITHUB_SHA) {
-              throw "$tag already exists on $tagCommit. Bump package.json before merging app changes."
+          $releaseExists = $false
+          $releaseIsDraft = $false
+          $releaseJson = & gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $releaseExists = $true
+            $releaseIsDraft = [bool](($releaseJson | ConvertFrom-Json).isDraft)
+          }
+
+          if ($tagExists -and $tagCommit -ne $env:GITHUB_SHA) {
+            if ($releaseFiles.Count -gt 0) {
+              throw "$tag already exists on $tagCommit. Bump package.json before merging release changes."
             }
+            $releaseNeeded = $false
+          }
+          elseif ($tagExists -and $tagCommit -eq $env:GITHUB_SHA) {
+            $releaseNeeded = -not ($releaseExists -and -not $releaseIsDraft)
+          }
+          else {
+            $releaseNeeded = $releaseFiles.Count -gt 0
           }
 
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "release_needed=$($releaseNeeded.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "tag_exists=$(([bool]$existingTag).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "tag_exists=$($tagExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "release_exists=$($releaseExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Install pnpm
         if: steps.version.outputs.release_needed == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 11.9.0
+          version: 11.27.1
 
       - name: Install Node.js
         if: steps.version.outputs.release_needed == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         if: steps.version.outputs.release_needed == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Build and test
+      - name: Lint
+        if: steps.version.outputs.release_needed == 'true'
+        run: pnpm lint
+
+      - name: Type-check
+        if: steps.version.outputs.release_needed == 'true'
+        run: pnpm typecheck
+
+      - name: Test desktop edition
         if: steps.version.outputs.release_needed == 'true'
         run: pnpm test
+
+      - name: Test static web edition
+        if: steps.version.outputs.release_needed == 'true'
+        run: pnpm test:web
+
+      - name: Reject high or critical production vulnerabilities
+        if: steps.version.outputs.release_needed == 'true'
+        run: pnpm audit:prod
 
       - name: Create Windows installer
         if: steps.version.outputs.release_needed == 'true'
@@ -88,40 +147,202 @@ jobs:
             -SkipBuild `
             -OutputRoot "$env:RUNNER_TEMP\ScribeFlow-Online-Installer"
 
+      - name: Verify installer package and checksum
+        if: steps.version.outputs.release_needed == 'true'
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip"
+          $checksum = "$zip.sha256"
+          if (-not (Test-Path -LiteralPath $zip) -or
+              -not (Test-Path -LiteralPath $checksum)) {
+            throw "Installer build did not produce both release assets."
+          }
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $declared = ((Get-Content -LiteralPath $checksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          if ($actual -ne $declared) {
+            throw "Installer checksum does not match the built ZIP."
+          }
+          $archiveFiles = @(tar -tf $zip)
+          if (-not ($archiveFiles -match 'Install ScribeFlow\.cmd$') -or
+              -not ($archiveFiles -match 'Install-ScribeFlow\.ps1$')) {
+            throw "Installer ZIP is missing its launch or install entry point."
+          }
+
+      - name: Smoke-test install, health, and uninstall
+        if: steps.version.outputs.release_needed == 'true'
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip"
+          $packageRoot = "$env:RUNNER_TEMP\installer-smoke-package"
+          $smokeLocalAppData = "$env:RUNNER_TEMP\installer-smoke-localappdata"
+          $smokeDocuments = "$env:RUNNER_TEMP\installer-smoke-documents"
+          Expand-Archive -LiteralPath $zip -DestinationPath $packageRoot -Force
+
+          $previousLocalAppData = $env:LOCALAPPDATA
+          $previousDocumentsRoot = $env:SCRIBEFLOW_DOCUMENTS_ROOT
+          $env:LOCALAPPDATA = $smokeLocalAppData
+          $env:SCRIBEFLOW_DOCUMENTS_ROOT = $smokeDocuments
+          $installedRoot = Join-Path $smokeLocalAppData "Programs\ScribeFlow"
+          try {
+            & (Join-Path $packageRoot "Install-ScribeFlow.ps1") -NoLaunch
+            $version = [string](
+              (Get-Content -LiteralPath (Join-Path $installedRoot "app-version.json") -Raw |
+                ConvertFrom-Json).version
+            )
+            $expectedVersion = "${{ steps.version.outputs.tag }}" -replace '^v', ''
+            if ($version -ne $expectedVersion) {
+              throw "Smoke installation reported unexpected version $version."
+            }
+            $health = Invoke-RestMethod `
+              -Uri "http://127.0.0.1:3000/__health" `
+              -TimeoutSec 5
+            if ($health.ready -ne $true -or [string]$health.version -ne $version) {
+              throw "Smoke installation did not report healthy."
+            }
+
+            & (Join-Path $installedRoot "scripts\uninstall-scribeflow.ps1") `
+              -Worker `
+              -InstallRoot $installedRoot `
+              -RemoveSettings
+            if (Test-Path -LiteralPath $installedRoot) {
+              throw "Smoke uninstaller left the installed application behind."
+            }
+          }
+          finally {
+            if (Test-Path -LiteralPath $installedRoot) {
+              & (Join-Path $installedRoot "scripts\uninstall-scribeflow.ps1") `
+                -Worker `
+                -InstallRoot $installedRoot `
+                -RemoveSettings
+            }
+            $env:LOCALAPPDATA = $previousLocalAppData
+            if ($null -eq $previousDocumentsRoot) {
+              Remove-Item Env:SCRIBEFLOW_DOCUMENTS_ROOT -ErrorAction SilentlyContinue
+            }
+            else {
+              $env:SCRIBEFLOW_DOCUMENTS_ROOT = $previousDocumentsRoot
+            }
+          }
+
       - name: Upload installer artifact
         if: steps.version.outputs.release_needed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ScribeFlow-Windows-Online-Installer
           path: |
             ${{ runner.temp }}/ScribeFlow-Windows-Online-Installer.zip
             ${{ runner.temp }}/ScribeFlow-Windows-Online-Installer.zip.sha256
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Publish tagged release
-        if: steps.version.outputs.release_needed == 'true'
+  publish-release:
+    if: needs.windows-installer.outputs.release_needed == 'true'
+    needs: windows-installer
+    runs-on: windows-latest
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Download verified installer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ScribeFlow-Windows-Online-Installer
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Recheck installer checksum before publishing
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\release-assets\ScribeFlow-Windows-Online-Installer.zip"
+          $checksum = "$zip.sha256"
+          if (-not (Test-Path -LiteralPath $zip) -or
+              -not (Test-Path -LiteralPath $checksum)) {
+            throw "Downloaded build artifact is incomplete."
+          }
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $declared = ((Get-Content -LiteralPath $checksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          if ($actual -ne $declared) {
+            throw "Downloaded installer checksum does not match the ZIP."
+          }
+
+      - name: Attest installer provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release-assets/ScribeFlow-Windows-Online-Installer.zip
+            ${{ runner.temp }}/release-assets/ScribeFlow-Windows-Online-Installer.zip.sha256
+
+      - name: Publish immutable tagged release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ steps.version.outputs.tag }}"
+          $tag = "${{ needs.windows-installer.outputs.tag }}"
           $assets = @(
-            "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip",
-            "$env:RUNNER_TEMP\ScribeFlow-Windows-Online-Installer.zip.sha256"
+            "$env:RUNNER_TEMP\release-assets\ScribeFlow-Windows-Online-Installer.zip",
+            "$env:RUNNER_TEMP\release-assets\ScribeFlow-Windows-Online-Installer.zip.sha256"
           )
-          if ("${{ steps.version.outputs.tag_exists }}" -ne "true") {
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a $tag $env:GITHUB_SHA -m "ScribeFlow $tag"
-            git push origin $tag
+
+          if ("${{ needs.windows-installer.outputs.tag_exists }}" -ne "true") {
+            $tagObject = & gh api --method POST `
+              "repos/$env:GITHUB_REPOSITORY/git/tags" `
+              -f "tag=$tag" `
+              -f "message=ScribeFlow $tag" `
+              -f "object=$env:GITHUB_SHA" `
+              -f "type=commit" `
+              --jq '.sha'
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagObject)) {
+              throw "GitHub could not create the annotated $tag object."
+            }
+            & gh api --method POST `
+              "repos/$env:GITHUB_REPOSITORY/git/refs" `
+              -f "ref=refs/tags/$tag" `
+              -f "sha=$tagObject"
+            if ($LASTEXITCODE -ne 0) {
+              throw "GitHub could not publish the $tag reference."
+            }
           }
 
-          if (gh release view $tag 2>$null) {
-            gh release upload $tag @assets --clobber
-          }
-          else {
-            gh release create $tag @assets `
-              --target $env:GITHUB_SHA `
+          if ("${{ needs.windows-installer.outputs.release_exists }}" -ne "true") {
+            gh release create $tag `
+              --draft `
+              --verify-tag `
               --generate-notes `
               --title "ScribeFlow $tag"
           }
+
+          $remoteNames = @(
+            gh release view $tag --json assets --jq '.assets[].name'
+          )
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            if ($remoteNames -contains $name) {
+              $existingDir = Join-Path $env:RUNNER_TEMP "existing-$name"
+              New-Item -ItemType Directory -Path $existingDir -Force | Out-Null
+              gh release download $tag --pattern $name --dir $existingDir
+              $remotePath = Join-Path $existingDir $name
+              $localHash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash
+              $remoteHash = (Get-FileHash -LiteralPath $remotePath -Algorithm SHA256).Hash
+              if ($localHash -ne $remoteHash) {
+                throw "Draft release already contains a different $name; refusing to overwrite it."
+              }
+            }
+            else {
+              gh release upload $tag $asset
+            }
+          }
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP "release-verification"
+          New-Item -ItemType Directory -Path $verifyDir -Force | Out-Null
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            gh release download $tag --pattern $name --dir $verifyDir
+            $downloaded = Join-Path $verifyDir $name
+            if ((Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash -ne
+                (Get-FileHash -LiteralPath $downloaded -Algorithm SHA256).Hash) {
+              throw "Uploaded release asset $name failed byte-for-byte verification."
+            }
+          }
+
+          gh release edit $tag --draft=false
