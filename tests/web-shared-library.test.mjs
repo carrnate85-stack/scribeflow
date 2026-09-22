@@ -32,14 +32,13 @@ test("ships a validated site-wide writing library without clinical notes", () =>
   assert.equal("pdf" in library, false);
 });
 
-test("allows only the repository owner to publish library fields", () => {
-  assert.match(page, /const webSharedLibraryFile = "public\/shared-library\.json"/);
-  assert.match(page, /identity\.login\?\.toLowerCase\(\) !== webSharedLibraryOwner/);
+test("saves only reusable writing-library fields automatically", () => {
+  assert.match(page, /https:\/\/mantledb\.sh\/v2\/scribeflow-/);
   assert.match(
     page,
-    /const sharedPayload: WebSharedLibraryPayload = \{\s*version: 1,\s*updatedAt,\s*templates,\s*quicktexts,\s*vocabulary,\s*\}/,
+    /const sharedPayload: WebSharedLibraryPayload = \{\s*version: 1,\s*updatedAt,\s*templates: nextTemplates,\s*quicktexts: nextQuicktexts,\s*vocabulary: nextVocabulary,\s*\}/,
   );
-  assert.match(page, /The key is\s*held only for this publication and is immediately forgotten/);
-  assert.doesNotMatch(page, /localStorage\.setItem\([^\n]*githubPublishingToken/);
-  assert.match(pagesHtml, /connect-src 'self' https:\/\/api\.github\.com/);
+  assert.match(page, /method: "POST"/);
+  assert.doesNotMatch(page, /githubPublishingToken|api\.github\.com/);
+  assert.match(pagesHtml, /connect-src 'self' https:\/\/mantledb\.sh/);
 });

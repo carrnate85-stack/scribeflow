@@ -1,72 +1,96 @@
 {
   "version": 1,
-  "updatedAt": 1790071681824,
+  "updatedAt": 1790081060000,
   "templates": [
     {
-      "id": "soap",
-      "name": "SOAP Note",
-      "type": "Primary care",
-      "description": "Structured note for a problem-focused visit",
-      "content": "SUBJECTIVE\nChief complaint: [Chief complaint]\n\nHistory of present illness:\n[HPI]\n\nReview of systems:\n[Pertinent review of systems]\n\nOBJECTIVE\nVital signs: [Vitals]\n\nPhysical examination:\n[Exam findings]\n\nASSESSMENT\n1. [Primary diagnosis]\n\nPLAN\n1. [Treatment and follow-up plan]\n"
+      "id": "template-1785153319977",
+      "name": "Ognomy New Patient",
+      "type": "Sleep",
+      "description": "new patient sleep template",
+      "content": "Subjective\n.name is a .age year old .gender who presents\n\n\nSleep Questionnaire:\n.sleepquestionnaire\n\n\nESS:\n.ess\n\n\nMeds:\n.meds\n\n\nAllergies:\n.allergies\n\n\nFamily History\n.familyhistory\n\n\nSocial History\n.socialhistory\n\n\nROS\nGeneral : No fever, chills or night sweats.\nHEENT : No sore throat, dry mouth or nasal congestion.\nCV : No chest pain, palpitations or leg swelling.\nRespiratory : No cough, chest congestion or SOB.\nNeurological : No headaches, memory changes or behavioral changes.\n\n\nObjective\nVitals: | .height | .weight | .bmi |\n\n\n\nPhysical Exam:\nConstitutional : Patient is alert and awake.\nSkin : Warm and dry, no rash.\nNeurological : No focal deficit, CN II-XII grossly intact.\nPsychiatric : Normal mood, thought content and judgement. \n\n\nAssessment and Plan:\n\n\n\n\nPlease note this encounter was created using voice recognition software. If patient or provider notes any discrepancy, please contact us and changes will be made when appropriate. Please excuse any typographical errors. Voice recognition software may confuse he/she language. Thank you.",
+      "contentHtml": "Subjective<div>.name is a .age year old .gender who presents</div><div><br></div><div>Sleep Questionnaire:</div><div>.sleepquestionnaire</div><div><br></div><div>ESS:</div><div>.ess</div><div><br></div><div>Meds:</div><div>.meds</div><div><br></div><div>Allergies:</div><div>.allergies</div><div><br></div><div>Family History</div><div>.familyhistory</div><div><br></div><div>Social History</div><div>.socialhistory</div><div><br></div><div>ROS</div><div>General : No fever, chills or night sweats.</div><div>HEENT : No sore throat, dry mouth or nasal congestion.</div><div>CV : No chest pain, palpitations or leg swelling.</div><div>Respiratory : No cough, chest congestion or SOB.</div><div>Neurological : No headaches, memory changes or behavioral changes.</div><div><br></div><div>Objective</div><div>Vitals: | .height | .weight | .bmi |\n</div><div><br></div><div>Physical Exam:</div><div>Constitutional : Patient is alert and awake.</div><div>Skin : Warm and dry, no rash.</div><div>Neurological : No focal deficit, CN II-XII grossly intact.</div><div>Psychiatric : Normal mood, thought content and judgement. </div><div><br></div><div>Assessment and Plan:</div><div><br></div><div><br></div><div>Please note this encounter was created using voice recognition software. If patient or provider notes any discrepancy, please contact us and changes will be made when appropriate. Please excuse any typographical errors. Voice recognition software may confuse he/she language. Thank you.</div>"
     },
     {
-      "id": "followup",
-      "name": "Follow-up",
-      "type": "Established patient",
-      "description": "Interval history, response, and next steps",
-      "content": "FOLLOW-UP NOTE\n\nReason for visit:\n[Reason for follow-up]\n\nInterval history:\n[Changes since last visit]\n\nMedication response / adherence:\n[Response and adherence]\n\nFocused examination:\n[Pertinent findings]\n\nAssessment:\n[Current clinical assessment]\n\nPlan:\n[Medication, testing, counseling, and follow-up]\n"
+      "id": "template-1787231135039",
+      "name": "Ognomy HST Follow-up",
+      "type": "Sleep",
+      "description": "follow-up HST results",
+      "content": "Subjective\n.name is a .age .gender who presents\n\n\nHST:\n.hst\n\n\nSleep Questionnaire:\n.sleepquestionnaire\n\n\nMeds:\n.meds\n\n\nROS\nGeneral : No fever, chills or night sweats.\nHEENT : No sore throat, dry mouth or nasal congestion.\nCV : No chest pain, palpitations or leg swelling.\nRespiratory : No cough, chest congestion or SOB.\nNeurological : No headaches, memory changes or behavioral changes.\n\n\nObjective\nVitals: | .height | .weight | .bmi |\n\n\n\nPhysical Exam:\nConstitutional : Patient is alert and awake.\nSkin : Warm and dry, no rash.\nNeurological : No focal deficit, CN II-XII grossly intact.\nPsychiatric : Normal mood, thought content and judgement. \n\n\nAssessment and Plan:\n\n\n\n\nPlease note this encounter was created using voice recognition software. If patient or provider notes any discrepancy, please contact us and changes will be made when appropriate. Please excuse any typographical errors. Voice recognition software may confuse he/she language. Thank you.",
+      "contentHtml": "Subjective<div>.name is a .age .gender who presents</div><div><br></div><div>HST:</div><div>.hst</div><div><br></div><div>Sleep Questionnaire:</div><div>.sleepquestionnaire</div><div><br></div><div>Meds:</div><div>.meds</div><div><br></div><div>ROS</div><div>General : No fever, chills or night sweats.</div><div>HEENT : No sore throat, dry mouth or nasal congestion.</div><div>CV : No chest pain, palpitations or leg swelling.</div><div>Respiratory : No cough, chest congestion or SOB.</div><div>Neurological : No headaches, memory changes or behavioral changes.</div><div><br></div><div>Objective</div><div>Vitals: | .height | .weight | .bmi |\n</div><div><br></div><div>Physical Exam:</div><div>Constitutional : Patient is alert and awake.</div><div>Skin : Warm and dry, no rash.</div><div>Neurological : No focal deficit, CN II-XII grossly intact.</div><div>Psychiatric : Normal mood, thought content and judgement. </div><div><br></div><div>Assessment and Plan:</div><div><br></div><div><br></div><div>Please note this encounter was created using voice recognition software. If patient or provider notes any discrepancy, please contact us and changes will be made when appropriate. Please excuse any typographical errors. Voice recognition software may confuse he/she language. Thank you.</div>"
     },
     {
-      "id": "consult",
-      "name": "Consultation",
-      "type": "Specialty",
-      "description": "Comprehensive consult with recommendations",
-      "content": "CONSULTATION NOTE\n\nReason for consultation:\n[Consult question]\n\nHistory:\n[Relevant history]\n\nPrior evaluation:\n[Imaging, labs, and treatments]\n\nExamination:\n[Pertinent examination]\n\nImpression:\n[Clinical impression]\n\nRecommendations:\n1. [Recommendation]\n2. [Follow-up]\n"
-    },
-    {
-      "id": "procedure",
-      "name": "Procedure Note",
-      "type": "Procedure",
-      "description": "Consent, technique, findings, and disposition",
-      "content": "PROCEDURE NOTE\n\nProcedure: [Procedure name]\nIndication: [Indication]\n\nConsent:\nThe risks, benefits, and alternatives were discussed. Informed consent was obtained.\n\nTechnique:\n[Technique and equipment]\n\nFindings:\n[Findings]\n\nComplications: None immediate.\nEstimated blood loss: [Amount]\n\nDisposition:\n[Post-procedure condition and instructions]\n"
+      "id": "template-1787832507145",
+      "name": "Ognomy CPAP Follow-up",
+      "type": "Sleep",
+      "description": "CPAP Follow-up",
+      "content": "Subjective\n.name is a .age .gender who presents\n\n\nPAP Data:\n.cpap\n\n\nSleep Questionnaire:\n.sleepquestionnaire\n\n\nMeds:\n.meds\n\n\nROS\nGeneral : No fever, chills or night sweats.\nHEENT : No sore throat, dry mouth or nasal congestion.\nCV : No chest pain, palpitations or leg swelling.\nRespiratory : No cough, chest congestion or SOB.\nNeurological : No headaches, memory changes or behavioral changes.\n\n\nObjective\nVitals: | .height | .weight | .bmi |\n\n\nPhysical Exam:\nConstitutional : Patient is alert and awake.\nSkin : Warm and dry, no rash.\nNeurological : No focal deficit, CN II-XII grossly intact.\nPsychiatric : Normal mood, thought content and judgement. \n\n\nAssessment and Plan:\n\n\n\n\nPlease note this encounter was created using voice recognition software. If patient or provider notes any discrepancy, please contact us and changes will be made when appropriate. Please excuse any typographical errors. Voice recognition software may confuse he/she language. Thank you.",
+      "contentHtml": "Subjective<div>.name is a .age .gender who presents</div><div><br></div><div>PAP Data:</div><div>.cpap</div><div><br></div><div>Sleep Questionnaire:</div><div>.sleepquestionnaire</div><div><br></div><div>Meds:</div><div>.meds</div><div><br></div><div>ROS</div><div>General : No fever, chills or night sweats.</div><div>HEENT : No sore throat, dry mouth or nasal congestion.</div><div>CV : No chest pain, palpitations or leg swelling.</div><div>Respiratory : No cough, chest congestion or SOB.</div><div>Neurological : No headaches, memory changes or behavioral changes.</div><div><br></div><div>Objective</div><div>Vitals: | .height | .weight | .bmi |</div><div><br></div><div>Physical Exam:</div><div>Constitutional : Patient is alert and awake.</div><div>Skin : Warm and dry, no rash.</div><div>Neurological : No focal deficit, CN II-XII grossly intact.</div><div>Psychiatric : Normal mood, thought content and judgement. </div><div><br></div><div>Assessment and Plan:</div><div><br></div><div><br></div><div>Please note this encounter was created using voice recognition software. If patient or provider notes any discrepancy, please contact us and changes will be made when appropriate. Please excuse any typographical errors. Voice recognition software may confuse he/she language. Thank you.</div>"
     }
   ],
   "quicktexts": [
     {
-      "id": "normal-exam",
-      "shortcut": ".normalexam",
-      "title": "Normal exam",
-      "content": "General: Alert, well appearing, and in no acute distress.\nCardiovascular: Regular rate and rhythm. No murmurs, rubs, or gallops.\nRespiratory: Clear to auscultation bilaterally. Normal work of breathing.\nAbdomen: Soft, non-tender, and non-distended.\nNeurologic: Alert and oriented. No focal deficits.",
-      "category": "Exam"
-    },
-    {
-      "id": "ros-negative",
-      "shortcut": ".rosneg",
-      "title": "Negative review of systems",
-      "content": "Review of systems is negative except as documented in the history of present illness.",
-      "category": "ROS"
-    },
-    {
-      "id": "counsel",
-      "shortcut": ".counsel",
-      "title": "Counseling",
-      "content": "The diagnosis, expected course, treatment options, and return precautions were reviewed with the patient. Questions were answered, and the patient expressed understanding of the plan.",
-      "category": "Plan"
-    },
-    {
-      "id": "return",
-      "shortcut": ".return",
-      "title": "Return precautions",
-      "content": "The patient was advised to seek urgent care for new or worsening symptoms and to return as scheduled, or sooner if concerns arise.",
-      "category": "Plan"
-    },
-    {
-      "id": "medreview",
-      "shortcut": ".medreview",
-      "title": "Medication review",
-      "content": "Medication reconciliation was completed. Indications, dosing, adherence, and potential adverse effects were reviewed.",
-      "category": "Medication"
+      "id": "1785170107498",
+      "shortcut": ".snoring",
+      "title": "Snoring",
+      "content": "Snoring\nWill do a home sleep study to rule out the possibility of underlying sleep disorder/sleep related breathing. We will follow-up after the study is completed.",
+      "category": "Custom"
     }
   ],
-  "vocabulary": []
+  "vocabulary": [
+    {
+      "id": "vocabulary-1785795125192",
+      "heard": "centimeter",
+      "replacement": "cm"
+    },
+    {
+      "id": "vocabulary-1785795135748",
+      "heard": "HI",
+      "replacement": "AHI"
+    },
+    {
+      "id": "vocabulary-1786706516367",
+      "heard": "slash",
+      "replacement": "/"
+    },
+    {
+      "id": "vocabulary-1786713840978",
+      "heard": "sleep in this",
+      "replacement": "sleepiness"
+    },
+    {
+      "id": "vocabulary-1785189907498",
+      "heard": "sleep in his",
+      "replacement": "sleepiness"
+    },
+    {
+      "id": "vocabulary-1787230685719",
+      "heard": "we'll",
+      "replacement": "will"
+    },
+    {
+      "id": "vocabulary-1785327348517",
+      "heard": "ZEP bound",
+      "replacement": "Zepbound"
+    },
+    {
+      "id": "vocabulary-1787699021386",
+      "heard": "zebbound",
+      "replacement": "Zepbound"
+    },
+    {
+      "id": "vocabulary-1788089874063",
+      "heard": "Mongero",
+      "replacement": "Monjuaro"
+    },
+    {
+      "id": "vocabulary-1788612942108",
+      "heard": "Zepp-bound",
+      "replacement": "Zepbound"
+    },
+    {
+      "id": "vocabulary-1789212451912",
+      "heard": "coma",
+      "replacement": ","
+    }
+  ]
 }
