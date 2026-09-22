@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "updatedAt": 1790071681824,
+  "templates": [
+    {
+      "id": "soap",
+      "name": "SOAP Note",
+      "type": "Primary care",
+      "description": "Structured note for a problem-focused visit",
+      "content": "SUBJECTIVE\nChief complaint: [Chief complaint]\n\nHistory of present illness:\n[HPI]\n\nReview of systems:\n[Pertinent review of systems]\n\nOBJECTIVE\nVital signs: [Vitals]\n\nPhysical examination:\n[Exam findings]\n\nASSESSMENT\n1. [Primary diagnosis]\n\nPLAN\n1. [Treatment and follow-up plan]\n"
+    },
+    {
+      "id": "followup",
+      "name": "Follow-up",
+      "type": "Established patient",
+      "description": "Interval history, response, and next steps",
+      "content": "FOLLOW-UP NOTE\n\nReason for visit:\n[Reason for follow-up]\n\nInterval history:\n[Changes since last visit]\n\nMedication response / adherence:\n[Response and adherence]\n\nFocused examination:\n[Pertinent findings]\n\nAssessment:\n[Current clinical assessment]\n\nPlan:\n[Medication, testing, counseling, and follow-up]\n"
+    },
+    {
+      "id": "consult",
+      "name": "Consultation",
+      "type": "Specialty",
+      "description": "Comprehensive consult with recommendations",
+      "content": "CONSULTATION NOTE\n\nReason for consultation:\n[Consult question]\n\nHistory:\n[Relevant history]\n\nPrior evaluation:\n[Imaging, labs, and treatments]\n\nExamination:\n[Pertinent examination]\n\nImpression:\n[Clinical impression]\n\nRecommendations:\n1. [Recommendation]\n2. [Follow-up]\n"
+    },
+    {
+      "id": "procedure",
+      "name": "Procedure Note",
+      "type": "Procedure",
+      "description": "Consent, technique, findings, and disposition",
+      "content": "PROCEDURE NOTE\n\nProcedure: [Procedure name]\nIndication: [Indication]\n\nConsent:\nThe risks, benefits, and alternatives were discussed. Informed consent was obtained.\n\nTechnique:\n[Technique and equipment]\n\nFindings:\n[Findings]\n\nComplications: None immediate.\nEstimated blood loss: [Amount]\n\nDisposition:\n[Post-procedure condition and instructions]\n"
+    }
+  ],
+  "quicktexts": [
+    {
+      "id": "normal-exam",
+      "shortcut": ".normalexam",
+      "title": "Normal exam",
+      "content": "General: Alert, well appearing, and in no acute distress.\nCardiovascular: Regular rate and rhythm. No murmurs, rubs, or gallops.\nRespiratory: Clear to auscultation bilaterally. Normal work of breathing.\nAbdomen: Soft, non-tender, and non-distended.\nNeurologic: Alert and oriented. No focal deficits.",
+      "category": "Exam"
+    },
+    {
+      "id": "ros-negative",
+      "shortcut": ".rosneg",
+      "title": "Negative review of systems",
+      "content": "Review of systems is negative except as documented in the history of present illness.",
+      "category": "ROS"
+    },
+    {
+      "id": "counsel",
+      "shortcut": ".counsel",
+      "title": "Counseling",
+      "content": "The diagnosis, expected course, treatment options, and return precautions were reviewed with the patient. Questions were answered, and the patient expressed understanding of the plan.",
+      "category": "Plan"
+    },
+    {
+      "id": "return",
+      "shortcut": ".return",
+      "title": "Return precautions",
+      "content": "The patient was advised to seek urgent care for new or worsening symptoms and to return as scheduled, or sooner if concerns arise.",
+      "category": "Plan"
+    },
+    {
+      "id": "medreview",
+      "shortcut": ".medreview",
+      "title": "Medication review",
+      "content": "Medication reconciliation was completed. Indications, dosing, adherence, and potential adverse effects were reviewed.",
+      "category": "Medication"
+    }
+  ],
+  "vocabulary": []
+}

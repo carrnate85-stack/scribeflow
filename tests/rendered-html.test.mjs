@@ -627,7 +627,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(page, /id="system-check-title">System check/);
   assert.match(page, /Version \{packageInfo\.version\}/);
   assert.match(page, /No note text or patient data is included in this check/);
-  assert.match(packageJson, /"version": "0\.1\.23"/);
+  assert.match(packageJson, /"version": "0\.1\.24"/);
 });
 
 test("extracts past medical history only through the next section", async () => {

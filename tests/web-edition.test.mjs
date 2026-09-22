@@ -35,7 +35,9 @@ test("renders the Dragon-ready web edition without local dictation setup", async
   assert.match(html, /PAP PDF/);
   assert.match(html, /Paste HST/);
   assert.match(html, /Clinical note editor/);
-  assert.match(html, /Saved in this browser/);
+  assert.match(html, /Shared across computers/);
+  assert.match(html, /Checking shared library/);
+  assert.match(html, /Publish/);
   assert.doesNotMatch(html, /Top bar microphone selection/);
   assert.doesNotMatch(html, /Persistent dictation controls/);
   assert.doesNotMatch(html, /Install Whisper|Update Whisper\?/);
