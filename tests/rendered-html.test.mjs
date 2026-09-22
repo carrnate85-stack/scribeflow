@@ -44,7 +44,7 @@ test("renders the clinical dictation workspace", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("includes quicktext, template, and local-save workflows", async () => {
+test("includes quicktext and template workflows without note storage", async () => {
   const page = (
     await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
   ).replace(/\r\n/g, "\n");
@@ -452,10 +452,7 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(localModelServer, /allowedOrigins/);
   assert.match(localModelServer, /process\.env\.LOCALAPPDATA/);
   assert.match(localModelServer, /process\.env\.SCRIBEFLOW_DOCUMENTS_ROOT/);
-  assert.match(
-    localModelServer,
-    /const notesRoot = resolve\(documentsRoot, "Notes"\)/,
-  );
+  assert.doesNotMatch(localModelServer, /\/documents\/save-note/);
   assert.match(
     localModelServer,
     /const templatesRoot = resolve\(documentsRoot, "Templates"\)/,
@@ -465,10 +462,6 @@ test("includes quicktext, template, and local-save workflows", async () => {
     /const templateBackupsRoot = resolve\(templatesRoot, "Backups"\)/,
   );
   assert.match(localModelServer, /migrateLegacyTemplates\(\)/);
-  assert.match(
-    localModelServer,
-    /url\.pathname === "\/documents\/save-note"/,
-  );
   assert.match(localModelServer, /url\.pathname === "\/config\/templates"/);
   assert.match(
     localModelServer,
@@ -554,7 +547,6 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installerBuilder, /app-version\.json/);
   assert.match(installerBuilder, /whisper-release\.json/);
   assert.match(installerBuilder, /whisper-release-utils\.mjs/);
-  assert.match(installerBuilder, /document-storage-utils\.mjs/);
   assert.match(installerBuilder, /library-sync-utils\.mjs/);
   assert.match(installerBuilder, /assets\\ScribeFlow\.ico/);
   assert.match(installerBuilder, /ScribeFlow-Windows-Online-Installer\.zip\.sha256/);
@@ -562,7 +554,6 @@ test("includes quicktext, template, and local-save workflows", async () => {
   assert.match(installer, /Templates sync through Documents\\ScribeFlow/);
   assert.match(installer, /Whisper is kept separately/);
   assert.match(installer, /whisper-release\.json/);
-  assert.match(installer, /document-storage-utils\.mjs/);
   assert.match(installer, /library-sync-utils\.mjs/);
   assert.match(installer, /Restored the previous ScribeFlow version after failure/);
   assert.match(installer, /verifiedInstalledVersion/);

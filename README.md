@@ -83,9 +83,10 @@ Installation does not require administrator access. The ScribeFlow installer
 stays small and never contains or automatically transfers the approximately
 3.2 GB speech model. Whisper downloads only after the in-app recommendation is
 accepted. App upgrades preserve Whisper and local runtime settings under
-`%LOCALAPPDATA%\ScribeFlow`. Saved notes and reusable templates live under
-`OneDrive\Documents\ScribeFlow`; patient notes, PDFs, audio, templates, and
-browser storage are never included in the installer.
+`%LOCALAPPDATA%\ScribeFlow`. Reusable desktop templates and writing tools stay
+under `OneDrive\Documents\ScribeFlow` so they can be shared between PCs.
+Patient notes, PDFs, audio, templates, and browser storage are never included
+in the installer.
 
 Each normal ScribeFlow launch checks this public repository's latest Release.
 When a newer version is available, the launcher downloads both the installer
@@ -161,6 +162,10 @@ are cleared after local transcription. ScribeFlow marks a changed note as
 note is discarded by starting over, replacing it with a template, refreshing,
 or closing the page.
 
+The desktop app has no note-save service. Older installations may have created
+a `Notes` folder under the OneDrive shared folder; check its contents before
+removing it. The current note is lost when cleared or closed unless copied.
+
 Templates and up to 20 timestamped recovery copies are protected under
 `OneDrive\Documents\ScribeFlow\Templates`, so they can follow the signed-in
 OneDrive account to another PC. A valid legacy template vault is migrated from
@@ -180,8 +185,7 @@ two PCs are combined, while competing edits receive a visible conflict copy.
 Full base, local, remote, and merged copies are retained under the corresponding
 local OneDrive `Conflicts` folder instead of silently overwriting data.
 Templates, Quicktext, and vocabulary all use the single
-`OneDrive\Documents\ScribeFlow` root; no second local Documents path is used
-when OneDrive is available. ScribeFlow first respects Windows' configured
+`OneDrive\Documents\ScribeFlow` shared root. ScribeFlow first respects Windows' configured
 Documents location; if it must choose between additional OneDrive roots, a
 business account is preferred over a personal account. The selection is saved
 and displayed so it cannot silently change. The selected dictation engine and

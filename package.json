@@ -1,6 +1,6 @@
 {
   "name": "scribeflow-clinical-dictation",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "private": true,
   "packageManager": "pnpm@11.27.1",
   "engines": {
@@ -11,7 +11,7 @@
     "build": "vinext build",
     "build:web": "vite build --config vite.github-pages.config.ts",
     "start": "vinext start",
-    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/installer-hardening.test.mjs tests/release-hardening.test.mjs tests/pdf-delete.test.mjs tests/whisper-release.test.mjs tests/document-storage.test.mjs tests/library-sync.test.mjs",
+    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/installer-hardening.test.mjs tests/release-hardening.test.mjs tests/pdf-delete.test.mjs tests/whisper-release.test.mjs tests/library-sync.test.mjs",
     "test:web": "pnpm run build:web && node --test tests/web-edition.test.mjs tests/web-shared-library.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-pages --ignore-pattern .next",
     "typecheck": "tsc --noEmit",

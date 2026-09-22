@@ -163,11 +163,10 @@ try {
 
 $documentsSelection = Get-ScribeFlowDocumentsSelection
 $documentsRoot = [IO.Path]::GetFullPath([string]$documentsSelection.root)
-New-Item -ItemType Directory -Path (Join-Path $documentsRoot "Notes") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $documentsRoot "Templates") -Force | Out-Null
 Save-ScribeFlowDocumentsSelection -Selection $documentsSelection
 $env:SCRIBEFLOW_DOCUMENTS_ROOT = $documentsRoot
-Write-Host "ScribeFlow documents: $documentsRoot ($($documentsSelection.source))" `
+Write-Host "ScribeFlow shared library: $documentsRoot ($($documentsSelection.source))" `
     -ForegroundColor DarkGray
 
 $whisperReleasePath = Join-Path $projectRoot "scripts\whisper-release.json"
