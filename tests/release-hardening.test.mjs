@@ -22,6 +22,11 @@ test("release workflow verifies the exact installer assets it builds", async () 
   assert.match(workflow, /releases\/tags\/\$tag/);
   assert.match(workflow, /\$statusCode -ne 404/);
   assert.doesNotMatch(workflow, /gh release view \$tag --json isDraft/);
+  assert.ok(
+    (workflow.match(/--repo \$env:GITHUB_REPOSITORY/g) || []).length >= 6,
+    "every release operation should name its repository explicitly",
+  );
+  assert.match(workflow, /transient failure/);
 });
 
 test("portable installer pins a patched Node 22 or newer runtime", async () => {
