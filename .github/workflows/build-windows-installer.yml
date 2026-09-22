@@ -78,10 +78,22 @@ jobs:
 
           $releaseExists = $false
           $releaseIsDraft = $false
-          $releaseJson = & gh release view $tag --json isDraft 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          try {
+            $releaseJson = Invoke-RestMethod `
+              -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" `
+              -Headers @{
+                Authorization = "Bearer $env:GH_TOKEN"
+                Accept = "application/vnd.github+json"
+                "X-GitHub-Api-Version" = "2022-11-28"
+              }
             $releaseExists = $true
-            $releaseIsDraft = [bool](($releaseJson | ConvertFrom-Json).isDraft)
+            $releaseIsDraft = [bool]$releaseJson.draft
+          }
+          catch {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            if ($statusCode -ne 404) {
+              throw
+            }
           }
 
           if ($tagExists -and $tagCommit -ne $env:GITHUB_SHA) {
