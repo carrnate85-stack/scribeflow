@@ -250,8 +250,14 @@ function Invoke-ScribeFlowInstaller {
         -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath `
-        -Wait `
         -PassThru
+    # Start-Process -Wait also waits for the installer's background app servers.
+    # Wait on the installer process itself so a healthy update can finish.
+    if (-not $process.WaitForExit(600000)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        throw "The ScribeFlow installer did not finish within ten minutes."
+    }
+    $process.Refresh()
     $script:lastInstallerExitCode = $process.ExitCode
     Add-InstallerOutputToLog -Path $stdoutPath -Stream "stdout" -Attempt $Attempt
     Add-InstallerOutputToLog -Path $stderrPath -Stream "stderr" -Attempt $Attempt
