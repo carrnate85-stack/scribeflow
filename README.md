@@ -169,6 +169,16 @@ items. Status wording such as **Saved in OneDrive folder** confirms the local
 file write only; Microsoft OneDrive controls and reports the separate cloud
 upload state.
 
+The GitHub Pages web edition automatically shares only templates, Quicktext,
+and vocabulary through its public-by-link MantleDB library. Saving one of those
+items replaces the shared copy immediately, so another computer receives it
+when the site opens or regains focus. Clinical note text, pasted intake or HST
+text, PDF contents, PDF measurements, and recordings are not included in that
+payload. The repository also keeps a non-patient fallback copy, and a scheduled
+workflow refreshes the shared library before MantleDB's inactivity window.
+Never place patient identifiers or protected health information in templates,
+Quicktext, or vocabulary.
+
 Only use OneDrive for protected health information when that account and your
 organization's configuration are approved for that purpose.
 

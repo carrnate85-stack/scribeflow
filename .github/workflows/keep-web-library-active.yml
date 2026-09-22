@@ -1,0 +1,38 @@
+name: Keep web library active
+
+on:
+  schedule:
+    - cron: "23 8 */14 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-library:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fallback library
+        uses: actions/checkout@v4
+
+      - name: Refresh shared template library
+        shell: bash
+        run: |
+          set -euo pipefail
+          library_url="https://mantledb.sh/v2/scribeflow-carrnate85-a4d72f39/library"
+          if ! curl --fail --silent --show-error --retry 3 "$library_url" --output /tmp/scribeflow-library.json; then
+            cp public/shared-library.json /tmp/scribeflow-library.json
+          fi
+          node -e '
+            const fs = require("fs");
+            const value = JSON.parse(fs.readFileSync("/tmp/scribeflow-library.json", "utf8"));
+            const keys = Object.keys(value).sort().join(",");
+            if (keys !== "quicktexts,templates,updatedAt,version,vocabulary") {
+              throw new Error("Unexpected shared-library fields");
+            }
+          '
+          curl --fail --silent --show-error --retry 3 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data-binary @/tmp/scribeflow-library.json \
+            "$library_url"
