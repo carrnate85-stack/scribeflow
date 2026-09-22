@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
@@ -9,6 +9,15 @@ const clientRoot = resolve(projectRoot, "dist", "client");
 const serverEntry = resolve(projectRoot, "dist", "server", "index.js");
 const host = "127.0.0.1";
 const port = Number(process.env.SCRIBEFLOW_PORT || 3000);
+const versionFile = resolve(projectRoot, "app-version.json");
+const appVersion = (() => {
+  try {
+    const value = JSON.parse(readFileSync(versionFile, "utf8")).version;
+    return typeof value === "string" ? value : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 if (!existsSync(serverEntry) || !existsSync(clientRoot)) {
   throw new Error("The ScribeFlow production build is incomplete.");
@@ -97,8 +106,23 @@ const server = createServer(async (request, response) => {
   try {
     const url = new URL(
       request.url || "/",
-      `http://${request.headers.host || `${host}:${port}`}`,
+      `http://${host}:${port}`,
     );
+    if (url.pathname === "/__health") {
+      const body = JSON.stringify({
+        ready: true,
+        service: "ScribeFlow",
+        version: appVersion,
+      });
+      response.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Length": String(Buffer.byteLength(body)),
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end(request.method === "HEAD" ? undefined : body);
+      return;
+    }
     const assetPath = localAssetPath(new Request(url));
     if (
       (request.method === "GET" || request.method === "HEAD") &&
@@ -133,6 +157,19 @@ const server = createServer(async (request, response) => {
     response.end("ScribeFlow could not render this page.");
   }
 });
+
+server.headersTimeout = 15_000;
+server.requestTimeout = 60_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 100;
+
+function shutdown() {
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 5_000).unref();
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
 
 server.listen(port, host, () => {
   process.stdout.write(`ScribeFlow ready at http://${host}:${port}/\n`);

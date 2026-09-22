@@ -46,7 +46,7 @@ const worker = {
       "Content-Security-Policy",
       [
         "default-src 'self'",
-        "connect-src 'self' http://127.0.0.1:3001 http://127.0.0.1:3002",
+        "connect-src 'self' http://127.0.0.1:3001",
         "img-src 'self' data: blob:",
         "media-src 'self' blob:",
         "worker-src 'self' blob:",

@@ -1,26 +1,28 @@
 {
   "name": "scribeflow-clinical-dictation",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.27.1",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
-    "build:web": "node scripts/build-web.mjs",
+    "build:web": "vite build --config vite.github-pages.config.ts",
     "start": "vinext start",
-    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/pdf-delete.test.mjs tests/whisper-release.test.mjs tests/document-storage.test.mjs tests/library-sync.test.mjs",
+    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/installer-hardening.test.mjs tests/release-hardening.test.mjs tests/pdf-delete.test.mjs tests/whisper-release.test.mjs tests/document-storage.test.mjs tests/library-sync.test.mjs",
     "test:web": "pnpm run build:web && node --test tests/web-edition.test.mjs tests/web-shared-library.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-pages --ignore-pattern .next",
+    "typecheck": "tsc --noEmit",
+    "audit:prod": "pnpm audit --prod --audit-level high",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",
     "drizzle-orm": "0.45.2",
-    "next": "16.2.6",
-    "pdfjs-dist": "^6.1.200",
+    "next": "16.3.6",
+    "pdfjs-dist": "6.3.289",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
@@ -34,7 +36,7 @@
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.3.6",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",

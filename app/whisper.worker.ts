@@ -1,6 +1,10 @@
 /// <reference lib="webworker" />
 
-import { env, pipeline } from "@huggingface/transformers";
+import {
+  env,
+  pipeline,
+  type AutomaticSpeechRecognitionPipeline,
+} from "@huggingface/transformers";
 
 type WhisperRequest =
   | { type: "load" }
@@ -22,14 +26,19 @@ env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.localModelPath = "http://127.0.0.1:3001/models/";
 env.useBrowserCache = false;
-env.backends.onnx.wasm.wasmPaths = "/wasm/";
+const onnxWasmEnvironment = env.backends.onnx.wasm;
+if (!onnxWasmEnvironment) {
+  throw new Error("The ONNX WASM runtime is unavailable in this worker");
+}
+onnxWasmEnvironment.wasmPaths = "/wasm/";
 
-let transcriberPromise: ReturnType<typeof pipeline> | null = null;
+let transcriberPromise: Promise<AutomaticSpeechRecognitionPipeline> | null =
+  null;
 let transcriptionQueue = Promise.resolve();
 
 function getTranscriber() {
   if (!transcriberPromise) {
-    transcriberPromise = pipeline(
+    transcriberPromise = pipeline<"automatic-speech-recognition">(
       "automatic-speech-recognition",
       localModelId,
       {

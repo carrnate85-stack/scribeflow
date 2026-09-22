@@ -1,4 +1,4 @@
-name: Validate and merge owner updates
+name: Validate owner update
 
 on:
   pull_request:
@@ -8,18 +8,18 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 concurrency:
-  group: owner-update-${{ github.event.pull_request.number }}
+  group: owner-update-validation-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  validate-and-merge:
+  validate:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login == github.repository_owner &&
@@ -27,13 +27,14 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Check out proposed update
-        uses: actions/checkout@v4
+      - name: Check out proposed update without write credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify app changes include a newer version
+      - name: Verify release changes include a newer version
         shell: pwsh
         run: |
           git fetch origin "${{ github.base_ref }}" --depth=1
@@ -42,8 +43,14 @@ jobs:
           )
           $releaseFiles = @(
             $changedFiles | Where-Object {
-              $_ -match "^(app|assets|installer|scripts)/" -or
-              $_ -in @("package.json", "Launch ScribeFlow.cmd")
+              $_ -match "^(app|assets|build|db|drizzle|github-pages|installer|public|scripts|worker)/" -or
+              $_ -match "(^|/)(vite|next|postcss|tailwind|tsconfig)[^/]*\.(js|mjs|cjs|ts|json)$" -or
+              $_ -in @(
+                "package.json",
+                "pnpm-lock.yaml",
+                "pnpm-workspace.yaml",
+                "Launch ScribeFlow.cmd"
+              )
             }
           )
           if ($releaseFiles.Count -eq 0) {
@@ -59,54 +66,34 @@ jobs:
               ConvertFrom-Json).version
           )
           if ($headVersion -le $baseVersion) {
-            throw "App changes require package.json to be bumped above $baseVersion."
+            throw "Release changes require package.json to be bumped above $baseVersion."
           }
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 11.9.0
+          version: 11.27.1
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and test
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check
+        run: pnpm typecheck
+
+      - name: Test desktop edition
         run: pnpm test
 
-      - name: Mark ready and merge verified owner update
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: |
-          function Invoke-GitHubWithRetry {
-            param([string[]]$Arguments)
+      - name: Test static web edition
+        run: pnpm test:web
 
-            for ($attempt = 1; $attempt -le 5; $attempt += 1) {
-              & gh @Arguments
-              if ($LASTEXITCODE -eq 0) {
-                return
-              }
-              if ($attempt -eq 5) {
-                throw "GitHub did not accept: gh $($Arguments -join ' ')"
-              }
-              Start-Sleep -Seconds (5 * $attempt)
-            }
-          }
-
-          if ("${{ github.event.pull_request.draft }}" -eq "true") {
-            Invoke-GitHubWithRetry -Arguments @("pr", "ready", $env:PR_URL)
-          }
-          Invoke-GitHubWithRetry -Arguments @(
-            "pr", "merge", $env:PR_URL, "--squash", "--delete-branch"
-          )
-          Invoke-GitHubWithRetry -Arguments @(
-            "workflow", "run", "build-windows-installer.yml",
-            "--ref", "${{ github.base_ref }}"
-          )
+      - name: Reject high or critical production vulnerabilities
+        run: pnpm audit:prod

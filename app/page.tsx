@@ -14,6 +14,25 @@ import {
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import packageInfo from "../package.json";
+import {
+  applyWebLibraryOperations,
+  createEmptyWebLibraryDeviceRecord,
+  createWebLibraryOperation,
+  diffWebLibraryPayload,
+  materializeWebLibraryDeviceRecords,
+  mergeWebSharedLibrary,
+  mergeWebLibraryDeviceRecords,
+  parseWebLibraryDeviceRecord,
+  payloadContainsWebLibraryMutations,
+  pruneCoveredWebLibraryOperations,
+  sanitizeTemplateHtml,
+  stableWebLibraryJson,
+  utf8ByteLength,
+  webLibraryContextFromOperations,
+  WEB_LIBRARY_COLLECTIONS,
+  WEB_LIBRARY_DEVICE_MAX_BYTES,
+  WEB_LIBRARY_MAX_BYTES,
+} from "./web-library-utils.mjs";
 
 type Template = {
   id: string;
@@ -59,6 +78,52 @@ type WebSharedLibraryPayload = {
   templates: Template[];
   quicktexts: Quicktext[];
   vocabulary: VocabularyItem[];
+};
+
+type WebLibraryCollection = "templates" | "quicktexts" | "vocabulary";
+
+type WebLibraryOperation = {
+  collection: WebLibraryCollection;
+  itemId: string;
+  dot: { actorId: string; counter: number };
+  context: Record<string, number>;
+  tombstone: boolean;
+  value?: Template | Quicktext | VocabularyItem;
+};
+
+type WebLibraryDeviceRecord = {
+  schema: 2;
+  deviceId: string;
+  updatedAt: number;
+  canonicalFingerprints: string[];
+  items: Record<
+    WebLibraryCollection,
+    Array<Omit<WebLibraryOperation, "collection">>
+  >;
+};
+
+type WebLibraryConflict = {
+  collection: WebLibraryCollection;
+  itemId: string;
+  heads: WebLibraryOperation[];
+  primary: Template | Quicktext | VocabularyItem;
+  copies: Array<{
+    conflictId: string;
+    value: Template | Quicktext | VocabularyItem;
+    operations: WebLibraryOperation[];
+  }>;
+  hasTombstone: boolean;
+};
+
+type WebLibraryPendingOperation = WebLibraryOperation & {
+  mutationId: string;
+  createdAt: number;
+};
+
+type WebLibrarySnapshot = {
+  savedAt: number;
+  reason: string;
+  payload: WebSharedLibraryPayload;
 };
 
 type VaultWriteResponse<T> = {
@@ -124,27 +189,6 @@ type MicrophoneTestState =
   | "heard"
   | "quiet"
   | "failed";
-
-type WhisperWorkerResponse =
-  | {
-      type: "progress";
-      progress?: number;
-      status?: string;
-      file?: string;
-    }
-  | { type: "ready" }
-  | {
-      type: "result";
-      id: number;
-      session: number;
-      text: string;
-    }
-  | {
-      type: "error";
-      id?: number;
-      session?: number;
-      message: string;
-    };
 
 type PdfMeasurements = {
   cpap?: string;
@@ -433,7 +477,15 @@ const storageKeys = {
   microphoneId: "scribe-microphone-id-v1",
   dictationDockCollapsed: "scribe-dictation-dock-collapsed-v1",
   dictationDockPosition: "scribe-dictation-dock-position-v1",
+  webLibraryOwnerKey: "scribe-web-library-owner-key-v1",
+  webLibraryDirty: "scribe-web-library-dirty-v1",
+  webLibraryBase: "scribe-web-library-base-v1",
+  webLibrarySnapshots: "scribe-web-library-snapshots-v1",
+  webLibraryDeviceId: "scribe-web-library-device-id-v2",
+  webLibraryDeviceRecord: "scribe-web-library-device-record-v2",
 };
+
+const webLibraryOutboxPrefix = "scribe-web-library-outbox-v2:";
 
 const legacyPatientDataStorageKeys = [
   "scribe-note-v1",
@@ -441,9 +493,16 @@ const legacyPatientDataStorageKeys = [
   "scribe-title-v1",
 ];
 
-const webEdition = import.meta.env.VITE_SCRIBEFLOW_WEB === "1";
+const webEdition =
+  (
+    import.meta.env as ImportMetaEnv & {
+      readonly VITE_SCRIBEFLOW_WEB?: string;
+    }
+  ).VITE_SCRIBEFLOW_WEB === "1";
+const webSharedLibraryNamespace = "scribeflow-carrnate85-a4d72f39";
 const webSharedLibraryRemoteUrl =
-  "https://mantledb.sh/v2/scribeflow-carrnate85-a4d72f39/library";
+  `https://mantledb.sh/v2/${webSharedLibraryNamespace}/library`;
+const webSharedLibraryDevicePathPrefix = "library-device-v2-";
 
 function webSharedLibraryUrl() {
   return webSharedLibraryRemoteUrl;
@@ -451,6 +510,71 @@ function webSharedLibraryUrl() {
 
 function webSharedLibraryFallbackUrl() {
   return `${import.meta.env.BASE_URL}shared-library.json`;
+}
+
+function webSharedLibraryListUrl() {
+  return `https://mantledb.sh/v2/list/${webSharedLibraryNamespace}`;
+}
+
+function webSharedLibraryDevicePath(deviceId: string) {
+  return `${webSharedLibraryDevicePathPrefix}${deviceId}`;
+}
+
+function webSharedLibraryDeviceUrl(deviceId: string) {
+  return `https://mantledb.sh/v2/${webSharedLibraryNamespace}/${webSharedLibraryDevicePath(
+    deviceId,
+  )}`;
+}
+
+function webSharedLibraryDeviceVisibilityUrl(deviceId: string) {
+  return `https://mantledb.sh/v2/visibility/${webSharedLibraryNamespace}/${webSharedLibraryDevicePath(
+    deviceId,
+  )}`;
+}
+
+function randomHex(byteLength: number) {
+  const bytes = new Uint8Array(byteLength);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+function currentTimestamp() {
+  return Date.now();
+}
+
+async function fingerprintWebLibrary(payload: WebSharedLibraryPayload) {
+  const bytes = new TextEncoder().encode(stableWebLibraryJson(payload));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+function webLibraryConflictSeed(fingerprint: string) {
+  return Number.parseInt(fingerprint.slice(0, 10), 16);
+}
+
+function collectCanonicalFingerprints(
+  records: WebLibraryDeviceRecord[],
+  additions: string[] = [],
+) {
+  return Array.from(
+    new Set([
+      ...records.flatMap((record) => record.canonicalFingerprints),
+      ...additions,
+    ]),
+  ).slice(-16);
+}
+
+function detectWindowFraming() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.top !== window.self;
+  } catch {
+    return true;
+  }
 }
 
 function parseDockPosition(value: string | null): DockPosition | null {
@@ -486,7 +610,13 @@ function parseStoredTemplates(value: string | null): Template[] | null {
     ) {
       return null;
     }
-    return parsed as Template[];
+    return (parsed as Template[]).map((template) => ({
+      ...template,
+      contentHtml:
+        typeof template.contentHtml === "string"
+          ? sanitizeTemplateHtml(template.contentHtml)
+          : undefined,
+    }));
   } catch {
     return null;
   }
@@ -642,6 +772,71 @@ function parseWebSharedLibraryPayload(
   }
 }
 
+function parseWebLibrarySnapshots(value: string | null): WebLibrarySnapshot[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((snapshot): WebLibrarySnapshot | null => {
+        if (!snapshot || typeof snapshot !== "object") return null;
+        const candidate = snapshot as Partial<WebLibrarySnapshot>;
+        const payload = parseWebSharedLibraryPayload(
+          JSON.stringify(candidate.payload),
+        );
+        if (
+          !payload ||
+          typeof candidate.savedAt !== "number" ||
+          !Number.isFinite(candidate.savedAt) ||
+          typeof candidate.reason !== "string"
+        ) {
+          return null;
+        }
+        return {
+          savedAt: candidate.savedAt,
+          reason: candidate.reason,
+          payload,
+        };
+      })
+      .filter((snapshot): snapshot is WebLibrarySnapshot => Boolean(snapshot))
+      .slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+function parseWebLibraryDeviceRecordForApp(
+  value: string | WebLibraryDeviceRecord | null,
+): WebLibraryDeviceRecord | null {
+  const parsed = parseWebLibraryDeviceRecord(value) as WebLibraryDeviceRecord | null;
+  if (!parsed) return null;
+
+  const items: WebLibraryDeviceRecord["items"] = {
+    templates: [],
+    quicktexts: [],
+    vocabulary: [],
+  };
+  for (const collection of WEB_LIBRARY_COLLECTIONS as WebLibraryCollection[]) {
+    for (const operation of parsed.items[collection]) {
+      if (operation.tombstone) {
+        items[collection].push(operation);
+        continue;
+      }
+      const serialized = JSON.stringify([operation.value]);
+      const candidates =
+        collection === "templates"
+          ? parseStoredTemplates(serialized)
+          : collection === "quicktexts"
+            ? parseStoredQuicktexts(serialized)
+            : parseStoredVocabulary(serialized);
+      const candidate = candidates?.[0];
+      if (!candidate || candidate.id !== operation.itemId) return null;
+      items[collection].push({ ...operation, value: candidate });
+    }
+  }
+  return { ...parsed, items };
+}
+
 function mergeWritingToolsForMigration(
   diskPayload: WritingToolsVaultPayload,
   browserPayload: WritingToolsVaultPayload,
@@ -664,7 +859,7 @@ function mergeWritingToolsForMigration(
 
   return {
     version: 1,
-    updatedAt: Math.max(Date.now(), diskPayload.updatedAt + 1),
+    updatedAt: Math.max(currentTimestamp(), diskPayload.updatedAt + 1),
     quicktexts: Array.from(quicktexts.values()),
     vocabulary: Array.from(vocabulary.values()),
   };
@@ -1460,6 +1655,7 @@ function collapseRepeatedWhisperPhrases(text: string) {
 
 export default function Home() {
   const [note, setNote] = useState("");
+  const [isFramed] = useState(() => webEdition && detectWindowFraming());
   const [noteHtml, setNoteHtml] = useState("");
   const [noteCopied, setNoteCopied] = useState(true);
   const [activePanel, setActivePanel] = useState<
@@ -1483,6 +1679,13 @@ export default function Home() {
   const [webSharedLibraryStatus, setWebSharedLibraryStatus] = useState(
     "Checking shared library",
   );
+  const [webLibraryOwnerKey, setWebLibraryOwnerKey] = useState("");
+  const [webLibraryDirty, setWebLibraryDirty] = useState(false);
+  const [webLibrarySaving, setWebLibrarySaving] = useState(false);
+  const [webLibrarySnapshots, setWebLibrarySnapshots] = useState<
+    WebLibrarySnapshot[]
+  >([]);
+  const [showWebLibraryManager, setShowWebLibraryManager] = useState(false);
   const [showSystemCheck, setShowSystemCheck] = useState(false);
   const [systemCheckRefreshing, setSystemCheckRefreshing] = useState(false);
   const [pdfMeasurements, setPdfMeasurements] =
@@ -1551,11 +1754,34 @@ export default function Home() {
   const writingToolsUpdatedAtRef = useRef(0);
   const webSharedLibraryUpdatedAtRef = useRef(0);
   const webSharedLibrarySavingRef = useRef(false);
-  const webSharedLibrarySaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const webSharedLibrarySaveQueueRef = useRef<Promise<boolean | void>>(
+    Promise.resolve(),
+  );
+  const webSharedLibraryDirtyRef = useRef(false);
+  const webSharedLibraryBaseRef = useRef<WebSharedLibraryPayload | null>(null);
+  const webSharedLibraryLocalRef = useRef<WebSharedLibraryPayload | null>(null);
+  const webSharedLibraryMutationEpochRef = useRef(0);
+  const webLibraryOwnerKeyRef = useRef("");
+  const webLibraryDeviceIdRef = useRef("");
+  const webLibraryActorIdRef = useRef("");
+  const webLibraryActorCounterRef = useRef(0);
+  const webLibraryDeviceRecordRef = useRef<WebLibraryDeviceRecord | null>(null);
+  const webLibraryHeadsRef = useRef(new Map<string, WebLibraryOperation[]>());
+  const webLibraryConflictsRef = useRef<WebLibraryConflict[]>([]);
+  const webLibraryRefreshEpochRef = useRef(0);
   const templateBaseRef = useRef<TemplateVaultPayload | null>(null);
   const writingToolsBaseRef = useRef<WritingToolsVaultPayload | null>(null);
   const refreshSharedLibraryRef = useRef<
     ((showFeedback?: boolean) => Promise<void>) | null
+  >(null);
+  const saveWebSharedLibraryRef = useRef<
+    | ((
+        nextTemplates: Template[],
+        nextQuicktexts: Quicktext[],
+        nextVocabulary: VocabularyItem[],
+        updatedAt: number,
+      ) => void)
+    | null
   >(null);
   const whisperLoadPromiseRef = useRef<Promise<void> | null>(null);
   const whisperResultHandlerRef = useRef<
@@ -1588,6 +1814,7 @@ export default function Home() {
   const papPdfInputRef = useRef<HTMLInputElement | null>(null);
   const lastSelectionRef = useRef<Range | null>(null);
   const templateEditorRef = useRef<HTMLDivElement | null>(null);
+  const webLibraryImportRef = useRef<HTMLInputElement | null>(null);
   const templateSelectionRef = useRef<Range | null>(null);
   const interimTranscriptRef = useRef("");
   const shouldRestartRef = useRef(false);
@@ -1606,14 +1833,392 @@ export default function Home() {
   const microphoneTestPeakRef = useRef(0);
   const microphoneTestSessionRef = useRef(0);
 
+  const rememberWebLibrarySnapshot = useCallback(
+    (payload: WebSharedLibraryPayload, reason: string) => {
+      if (!webEdition) return;
+      const existing = parseWebLibrarySnapshots(
+        window.localStorage.getItem(storageKeys.webLibrarySnapshots),
+      );
+      const serializedPayload = JSON.stringify(payload);
+      const snapshots = [
+        { savedAt: currentTimestamp(), reason, payload },
+        ...existing.filter(
+          (snapshot) => JSON.stringify(snapshot.payload) !== serializedPayload,
+        ),
+      ].slice(0, 10);
+      window.localStorage.setItem(
+        storageKeys.webLibrarySnapshots,
+        JSON.stringify(snapshots),
+      );
+      setWebLibrarySnapshots(snapshots);
+    },
+    [],
+  );
+
+  const persistWebLibraryLocally = useCallback(
+    (
+      payload: WebSharedLibraryPayload,
+      options: {
+        dirty: boolean;
+        base?: WebSharedLibraryPayload | null;
+        snapshotReason?: string;
+      },
+    ) => {
+      const sanitizedPayload =
+        parseWebSharedLibraryPayload(JSON.stringify(payload)) || payload;
+      const serializedTemplates = JSON.stringify(sanitizedPayload.templates);
+      webSharedLibraryLocalRef.current = sanitizedPayload;
+      webSharedLibraryDirtyRef.current = options.dirty;
+      setWebLibraryDirty(options.dirty);
+      webSharedLibraryUpdatedAtRef.current = sanitizedPayload.updatedAt;
+      templatesUpdatedAtRef.current = sanitizedPayload.updatedAt;
+      writingToolsUpdatedAtRef.current = sanitizedPayload.updatedAt;
+      setTemplates(sanitizedPayload.templates);
+      setQuicktexts(sanitizedPayload.quicktexts);
+      setVocabulary(sanitizedPayload.vocabulary);
+      setTemplatesReady(true);
+      setWritingToolsReady(true);
+      window.localStorage.setItem(storageKeys.templates, serializedTemplates);
+      window.localStorage.setItem(
+        storageKeys.templatesBackup,
+        serializedTemplates,
+      );
+      window.localStorage.setItem(
+        storageKeys.templatesUpdatedAt,
+        String(sanitizedPayload.updatedAt),
+      );
+      window.localStorage.setItem(
+        storageKeys.quicktexts,
+        JSON.stringify(sanitizedPayload.quicktexts),
+      );
+      window.localStorage.setItem(
+        storageKeys.vocabulary,
+        JSON.stringify(sanitizedPayload.vocabulary),
+      );
+      window.localStorage.setItem(
+        storageKeys.writingToolsUpdatedAt,
+        String(sanitizedPayload.updatedAt),
+      );
+      window.localStorage.setItem(
+        storageKeys.webLibraryDirty,
+        options.dirty ? "true" : "false",
+      );
+      if (options.base !== undefined) {
+        webSharedLibraryBaseRef.current = options.base;
+        if (options.base) {
+          window.localStorage.setItem(
+            storageKeys.webLibraryBase,
+            JSON.stringify(options.base),
+          );
+        } else {
+          window.localStorage.removeItem(storageKeys.webLibraryBase);
+        }
+      }
+      if (options.snapshotReason) {
+        rememberWebLibrarySnapshot(
+          sanitizedPayload,
+          options.snapshotReason,
+        );
+      }
+      return sanitizedPayload;
+    },
+    [rememberWebLibrarySnapshot],
+  );
+
+  const readWebLibraryOutbox = useCallback(() => {
+    const deviceId = webLibraryDeviceIdRef.current;
+    if (!deviceId) return [] as WebLibraryPendingOperation[];
+    const entries: WebLibraryPendingOperation[] = [];
+    const prefix = `${webLibraryOutboxPrefix}${deviceId}:`;
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(key) || "[]") as
+          | WebLibraryPendingOperation[]
+          | null;
+        if (!Array.isArray(parsed)) continue;
+        for (const candidate of parsed) {
+          if (
+            !candidate ||
+            typeof candidate.mutationId !== "string" ||
+            typeof candidate.createdAt !== "number"
+          ) {
+            continue;
+          }
+          try {
+            const operation = createWebLibraryOperation({
+              ...candidate,
+              actorId: candidate.dot.actorId,
+              counter: candidate.dot.counter,
+            }) as WebLibraryOperation;
+            if (!operation.dot.actorId.startsWith(`${deviceId}.`)) continue;
+            entries.push({
+              ...operation,
+              mutationId: candidate.mutationId,
+              createdAt: candidate.createdAt,
+            });
+          } catch {
+            // Ignore malformed same-origin storage instead of publishing it.
+          }
+        }
+      } catch {
+        // Ignore a damaged outbox; the browser payload and snapshots remain.
+      }
+    }
+    return entries.sort(
+      (left, right) =>
+        left.createdAt - right.createdAt ||
+        left.mutationId.localeCompare(right.mutationId),
+    );
+  }, []);
+
+  const queueWebLibraryMutations = useCallback(
+    (
+      previous: WebSharedLibraryPayload | null,
+      next: WebSharedLibraryPayload,
+    ) => {
+      const deviceId = webLibraryDeviceIdRef.current;
+      const actorId = webLibraryActorIdRef.current;
+      if (!deviceId || !actorId) {
+        throw new Error("The browser sync identity is not ready");
+      }
+      const existing = readWebLibraryOutbox();
+      const mutations = diffWebLibraryPayload(previous, next) as Array<{
+        collection: WebLibraryCollection;
+        itemId: string;
+        tombstone: boolean;
+        value?: Template | Quicktext | VocabularyItem;
+      }>;
+      const queued: WebLibraryPendingOperation[] = [];
+      for (const mutation of mutations) {
+        const groupKey = `${mutation.collection}\u0000${mutation.itemId}`;
+        const priorPending = [...existing, ...queued].filter(
+          (operation) =>
+            operation.collection === mutation.collection &&
+            operation.itemId === mutation.itemId,
+        );
+        const context = webLibraryContextFromOperations([
+          ...(webLibraryHeadsRef.current.get(groupKey) || []),
+          ...priorPending,
+        ]) as Record<string, number>;
+        webLibraryActorCounterRef.current += 1;
+        const operation = createWebLibraryOperation({
+          ...mutation,
+          actorId,
+          counter: webLibraryActorCounterRef.current,
+          context,
+        }) as WebLibraryOperation;
+        queued.push({
+          ...operation,
+          mutationId: `${actorId}:${operation.dot.counter}:${randomHex(4)}`,
+          createdAt: currentTimestamp(),
+        });
+      }
+      if (queued.length > 0) {
+        const immutableBatchKey = `${webLibraryOutboxPrefix}${deviceId}:${actorId}:${currentTimestamp()}:${randomHex(8)}`;
+        window.localStorage.setItem(
+          immutableBatchKey,
+          JSON.stringify(queued),
+        );
+      }
+      return queued;
+    },
+    [readWebLibraryOutbox],
+  );
+
+  const clearWebLibraryOutboxEntries = useCallback(
+    (processedIds: Set<string>) => {
+      const deviceId = webLibraryDeviceIdRef.current;
+      const prefix = `${webLibraryOutboxPrefix}${deviceId}:`;
+      const keys: string[] = [];
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (key?.startsWith(prefix)) keys.push(key);
+      }
+      for (const key of keys) {
+        try {
+          const parsed = JSON.parse(window.localStorage.getItem(key) || "[]") as
+            | WebLibraryPendingOperation[]
+            | null;
+          if (!Array.isArray(parsed)) continue;
+          const remaining = parsed.filter(
+            (entry) => !processedIds.has(entry.mutationId),
+          );
+          if (remaining.length === parsed.length) {
+            continue;
+          }
+          if (remaining.length > 0) {
+            window.localStorage.setItem(key, JSON.stringify(remaining));
+          } else {
+            window.localStorage.removeItem(key);
+          }
+        } catch {
+          // Leave malformed data in place for manual recovery/export.
+        }
+      }
+    },
+    [],
+  );
+
+  const fetchWebLibraryDeviceRecords = useCallback(async () => {
+    const listResponse = await fetch(
+      `${webSharedLibraryListUrl()}?refresh=${currentTimestamp()}`,
+      { cache: "no-store" },
+    );
+    if (!listResponse.ok) {
+      throw new Error("The shared-library device list is unavailable");
+    }
+    const listed = (await listResponse.json()) as {
+      entries?: Array<{ path?: unknown; public_read?: unknown }>;
+    };
+    const paths = (listed.entries || [])
+      .filter(
+        (entry) =>
+          entry.public_read === 1 || entry.public_read === true,
+      )
+      .map((entry) => String(entry.path || ""))
+      .filter((path) => /^library-device-v2-[a-f0-9]{32}$/.test(path));
+    if (paths.length > 98) {
+      throw new Error("The shared library has too many browser records");
+    }
+    const records = await Promise.all(
+      paths.map(async (path) => {
+        const response = await fetch(
+          `https://mantledb.sh/v2/${webSharedLibraryNamespace}/${path}?refresh=${currentTimestamp()}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) return null;
+        const record = parseWebLibraryDeviceRecordForApp(await response.text());
+        return record && path === webSharedLibraryDevicePath(record.deviceId)
+          ? record
+          : null;
+      }),
+    );
+    return records.filter(
+      (record): record is WebLibraryDeviceRecord => Boolean(record),
+    );
+  }, []);
+
+  const fetchWebSharedCanonical = useCallback(async () => {
+    const response = await fetch(
+      `${webSharedLibraryUrl()}?refresh=${currentTimestamp()}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) return null;
+    const payload = parseWebSharedLibraryPayload(await response.text());
+    if (!payload) return null;
+    return {
+      payload,
+      fingerprint: await fingerprintWebLibrary(payload),
+    };
+  }, []);
+
+  const withWebLibraryWriteLock = useCallback(
+    async <T,>(callback: () => Promise<T>) => {
+      const lockManager = (
+        navigator as Navigator & {
+          locks?: {
+            request: <R>(name: string, callback: () => Promise<R>) => Promise<R>;
+          };
+        }
+      ).locks;
+      if (!lockManager) {
+        const error = new Error(
+          "This browser cannot safely coordinate library edits across tabs",
+        ) as Error & { code?: string };
+        error.code = "web-locks-unavailable";
+        throw error;
+      }
+      return lockManager.request(
+        `scribeflow-library-v2-${webLibraryDeviceIdRef.current}`,
+        callback,
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    saveWebSharedLibraryRef.current = saveWebSharedLibrary;
+  });
+
+  useEffect(() => {
+    if (!webEdition) return;
+    const storedDeviceId = window.localStorage
+      .getItem(storageKeys.webLibraryDeviceId)
+      ?.trim();
+    const deviceId = /^[a-f0-9]{32}$/.test(storedDeviceId || "")
+      ? (storedDeviceId as string)
+      : randomHex(16);
+    window.localStorage.setItem(storageKeys.webLibraryDeviceId, deviceId);
+    webLibraryDeviceIdRef.current = deviceId;
+    webLibraryActorIdRef.current = `${deviceId}.${randomHex(8)}`;
+    webLibraryActorCounterRef.current = 0;
+    const storedDeviceRecord = parseWebLibraryDeviceRecordForApp(
+      window.localStorage.getItem(storageKeys.webLibraryDeviceRecord),
+    );
+    if (storedDeviceRecord?.deviceId === deviceId) {
+      webLibraryDeviceRecordRef.current = storedDeviceRecord;
+      const cachedMaterialized = materializeWebLibraryDeviceRecords([
+        storedDeviceRecord,
+      ]) as {
+        heads: Map<string, WebLibraryOperation[]>;
+        conflicts: WebLibraryConflict[];
+      };
+      webLibraryHeadsRef.current = cachedMaterialized.heads;
+      webLibraryConflictsRef.current = cachedMaterialized.conflicts;
+    } else {
+      window.localStorage.removeItem(storageKeys.webLibraryDeviceRecord);
+    }
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const fragmentKey =
+      fragment.get("mantle-key") ||
+      fragment.get("mantleKey") ||
+      fragment.get("owner-key") ||
+      fragment.get("ownerKey") ||
+      fragment.get("key");
+    const storedKey = window.localStorage.getItem(
+      storageKeys.webLibraryOwnerKey,
+    );
+    const ownerKey = fragmentKey?.trim() || storedKey?.trim() || "";
+    if (ownerKey) {
+      window.localStorage.setItem(storageKeys.webLibraryOwnerKey, ownerKey);
+      webLibraryOwnerKeyRef.current = ownerKey;
+    }
+    if (fragmentKey) {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    }
+    const dirty =
+      window.localStorage.getItem(storageKeys.webLibraryDirty) === "true";
+    webSharedLibraryDirtyRef.current = dirty;
+    webSharedLibraryBaseRef.current = parseWebSharedLibraryPayload(
+      window.localStorage.getItem(storageKeys.webLibraryBase),
+    );
+    const snapshots = parseWebLibrarySnapshots(
+      window.localStorage.getItem(storageKeys.webLibrarySnapshots),
+    );
+    const timer = window.setTimeout(() => {
+      if (ownerKey) setWebLibraryOwnerKey(ownerKey);
+      setWebLibraryDirty(dirty);
+      setWebLibrarySnapshots(snapshots);
+      if (fragmentKey) setToast("Owner access saved on this browser");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (!showTemplateForm) return;
     const editor = templateEditorRef.current;
     if (!editor) return;
 
-    editor.innerHTML =
+    editor.innerHTML = sanitizeTemplateHtml(
       editingTemplate?.contentHtml ||
-      plainTextToHtml(editingTemplate?.content ?? "");
+        plainTextToHtml(editingTemplate?.content ?? ""),
+    );
     templateSelectionRef.current = null;
   }, [editingTemplate, showTemplateForm]);
 
@@ -1621,7 +2226,7 @@ export default function Home() {
     const editor = noteRef.current;
     if (!editor) return;
     setNote(editor.innerText.replace(/\u00a0/g, " "));
-    setNoteHtml(editor.innerHTML);
+    setNoteHtml(sanitizeTemplateHtml(editor.innerHTML));
     setNoteCopied(false);
   }, []);
 
@@ -1800,7 +2405,7 @@ export default function Home() {
   );
 
   const setEditorText = useCallback((content: string, contentHtml?: string) => {
-    const html = contentHtml || plainTextToHtml(content);
+    const html = sanitizeTemplateHtml(contentHtml || plainTextToHtml(content));
     setNote(content);
     setNoteHtml(html);
     setNoteCopied(!content.trim());
@@ -1813,10 +2418,8 @@ export default function Home() {
     (measurements: PdfMeasurements) => {
       const editor = noteRef.current;
       if (!editor) return false;
-      const nextHtml = resolveMeasurementTokens(
-        editor.innerHTML,
-        measurements,
-        true,
+      const nextHtml = sanitizeTemplateHtml(
+        resolveMeasurementTokens(editor.innerHTML, measurements, true),
       );
       if (nextHtml === editor.innerHTML) return false;
       editor.innerHTML = nextHtml;
@@ -1911,7 +2514,7 @@ export default function Home() {
         : "Reading PDF locally...",
     );
 
-    let pdfBytes: Uint8Array | null = null;
+    let pdfBytes: Uint8Array<ArrayBuffer> | null = null;
     let loadingTask: PDFDocumentLoadingTask | null = null;
     let pdfDocument: PDFDocumentProxy | null = null;
     let scanSucceeded = false;
@@ -1933,7 +2536,13 @@ export default function Home() {
 
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-      loadingTask = pdfjs.getDocument({ data: pdfBytes });
+      loadingTask = pdfjs.getDocument(
+        {
+          data: pdfBytes,
+          isEvalSupported: false,
+          enableScripting: false,
+        } as Parameters<typeof pdfjs.getDocument>[0],
+      );
       pdfDocument = await loadingTask.promise;
 
       const pageText: string[] = [];
@@ -2443,7 +3052,7 @@ export default function Home() {
                 ? storedTemplatesUpdatedAt
                 : webEdition
                   ? 0
-                  : Date.now(),
+                  : currentTimestamp(),
             templates: browserTemplates,
           }
         : null;
@@ -2455,7 +3064,7 @@ export default function Home() {
           : diskPayload ||
             browserPayload || {
               version: 1 as const,
-              updatedAt: webEdition ? 0 : Date.now(),
+              updatedAt: webEdition ? 0 : currentTimestamp(),
               templates: starterTemplates,
             };
 
@@ -2566,11 +3175,11 @@ export default function Home() {
                 updatedAt:
                   browserPayload.updatedAt > 0
                     ? browserPayload.updatedAt
-                    : Date.now(),
+                    : currentTimestamp(),
               }
             : {
                 version: 1,
-                updatedAt: webEdition ? 0 : Date.now(),
+                updatedAt: webEdition ? 0 : currentTimestamp(),
                 quicktexts: starterQuicktexts,
                 vocabulary: [],
               });
@@ -2632,131 +3241,437 @@ export default function Home() {
         }
       }
     })();
-    if (!webEdition) {
-      setSpeechSupported(
-        Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
-      );
-      setWhisperSupported(
-        Boolean(navigator.mediaDevices?.getUserMedia && "AudioContext" in window),
-      );
-      if (
-        storedDictationEngine === "whisper" ||
-        storedDictationEngine === "chrome"
-      ) {
-        setDictationEngine(storedDictationEngine);
-      }
-      if (storedMicrophoneId) {
-        setSelectedMicrophoneId(storedMicrophoneId);
-      }
-      if (storedDockCollapsed === "false") {
-        setDockCollapsed(false);
-      }
-      setDockPosition(storedDockPosition);
-      void refreshMicrophones();
-    }
+    const nativeStateTimer = webEdition
+      ? null
+      : window.setTimeout(() => {
+          setSpeechSupported(
+            Boolean(
+              window.SpeechRecognition || window.webkitSpeechRecognition,
+            ),
+          );
+          setWhisperSupported(
+            Boolean(navigator.mediaDevices && "AudioContext" in window),
+          );
+          if (
+            storedDictationEngine === "whisper" ||
+            storedDictationEngine === "chrome"
+          ) {
+            setDictationEngine(storedDictationEngine);
+          }
+          if (storedMicrophoneId) {
+            setSelectedMicrophoneId(storedMicrophoneId);
+          }
+          if (storedDockCollapsed === "false") {
+            setDockCollapsed(false);
+          }
+          setDockPosition(storedDockPosition);
+          void refreshMicrophones();
+        }, 0);
+    return () => {
+      if (nativeStateTimer !== null) window.clearTimeout(nativeStateTimer);
+    };
   }, [persistTemplatesToDisk, persistWritingToolsToDisk, refreshMicrophones]);
 
   useEffect(() => {
     if (!templatesReady || !writingToolsReady) return;
     if (webEdition) {
       let cancelled = false;
+      let lastAutomaticRefreshAt = 0;
+      if (!webSharedLibraryLocalRef.current) {
+        webSharedLibraryLocalRef.current = {
+          version: 1,
+          updatedAt: Math.max(
+            Number(
+              window.localStorage.getItem(storageKeys.templatesUpdatedAt) || 0,
+            ),
+            Number(
+              window.localStorage.getItem(storageKeys.writingToolsUpdatedAt) ||
+                0,
+            ),
+          ),
+          templates:
+            parseStoredTemplates(
+              window.localStorage.getItem(storageKeys.templates),
+            ) || starterTemplates,
+          quicktexts:
+            parseStoredQuicktexts(
+              window.localStorage.getItem(storageKeys.quicktexts),
+            ) || starterQuicktexts,
+          vocabulary:
+            parseStoredVocabulary(
+              window.localStorage.getItem(storageKeys.vocabulary),
+            ) || [],
+        };
+      }
       const refreshWebSharedLibrary = async (showFeedback = false) => {
         if (webSharedLibrarySavingRef.current) return;
+        const mutationEpoch = webSharedLibraryMutationEpochRef.current;
+        if (
+          !showFeedback &&
+          currentTimestamp() - lastAutomaticRefreshAt < 60_000
+        ) {
+          return;
+        }
+        const refreshEpoch = ++webLibraryRefreshEpochRef.current;
+        lastAutomaticRefreshAt = currentTimestamp();
         if (showFeedback) setSyncRefreshing(true);
         try {
-          let payload: WebSharedLibraryPayload | null = null;
-          let loadedFromRemote = false;
-          for (const [index, url] of [
-            webSharedLibraryUrl(),
-            webSharedLibraryFallbackUrl(),
-          ].entries()) {
+          let deviceRecords: WebLibraryDeviceRecord[] | null = null;
+          try {
+            deviceRecords = await fetchWebLibraryDeviceRecords();
+          } catch {
+            deviceRecords = null;
+          }
+          let canonicalState: {
+            payload: WebSharedLibraryPayload;
+            fingerprint: string;
+          } | null = null;
+          try {
+            canonicalState = await fetchWebSharedCanonical();
+          } catch {
+            canonicalState = null;
+          }
+          if (
+            deviceRecords &&
+            deviceRecords.length > 0 &&
+            canonicalState &&
+            !deviceRecords.some((record) =>
+              record.canonicalFingerprints.includes(
+                canonicalState.fingerprint,
+              ),
+            )
+          ) {
             try {
-              const response = await fetch(`${url}?refresh=${Date.now()}`, {
-                cache: "no-store",
-              });
-              if (!response.ok) continue;
-              payload = parseWebSharedLibraryPayload(await response.text());
-              if (payload) {
-                loadedFromRemote = index === 0;
-                break;
+              const markerRefresh = await fetchWebLibraryDeviceRecords();
+              if (
+                markerRefresh.some((record) =>
+                  record.canonicalFingerprints.includes(
+                    canonicalState.fingerprint,
+                  ),
+                )
+              ) {
+                deviceRecords = markerRefresh;
               }
             } catch {
-              // Try the static backup bundled with the site.
+              // Continue with the first consistent snapshot and import safely.
             }
           }
-          if (!payload) throw new Error("Shared library is invalid");
-          if (cancelled) return;
 
-          webSharedLibraryUpdatedAtRef.current = payload.updatedAt;
-          const templatesChanged =
-            JSON.stringify(payload.templates) !==
-            window.localStorage.getItem(storageKeys.templates);
-          const writingToolsChanged =
-            JSON.stringify(payload.quicktexts) !==
-              window.localStorage.getItem(storageKeys.quicktexts) ||
-            JSON.stringify(payload.vocabulary) !==
-              window.localStorage.getItem(storageKeys.vocabulary);
-          const serializedTemplates = JSON.stringify(payload.templates);
-          templatesUpdatedAtRef.current = payload.updatedAt;
-          writingToolsUpdatedAtRef.current = payload.updatedAt;
-          templateBaseRef.current = {
-            version: 1,
-            updatedAt: payload.updatedAt,
-            templates: payload.templates,
-          };
-          writingToolsBaseRef.current = {
-            version: 1,
-            updatedAt: payload.updatedAt,
-            quicktexts: payload.quicktexts,
-            vocabulary: payload.vocabulary,
-          };
-          setTemplates(payload.templates);
-          setQuicktexts(payload.quicktexts);
-          setVocabulary(payload.vocabulary);
-          window.localStorage.setItem(storageKeys.templates, serializedTemplates);
-          window.localStorage.setItem(
-            storageKeys.templatesBackup,
-            serializedTemplates,
-          );
-          window.localStorage.setItem(
-            storageKeys.templatesUpdatedAt,
-            String(payload.updatedAt),
-          );
-          window.localStorage.setItem(
-            storageKeys.quicktexts,
-            JSON.stringify(payload.quicktexts),
-          );
-          window.localStorage.setItem(
-            storageKeys.vocabulary,
-            JSON.stringify(payload.vocabulary),
-          );
-          window.localStorage.setItem(
-            storageKeys.writingToolsUpdatedAt,
-            String(payload.updatedAt),
-          );
-          setTemplateStorageStatus(
-            loadedFromRemote ? "Saved everywhere" : "Loaded from backup",
-          );
-          setWritingToolsStorageStatus(
-            loadedFromRemote ? "Saved everywhere" : "Loaded from backup",
-          );
-          setWebSharedLibraryStatus(
-            loadedFromRemote
-              ? "Your library is saved everywhere"
-              : "Shared backup loaded · online saving unavailable",
-          );
-          if (showFeedback) {
-            setToast(
-              templatesChanged || writingToolsChanged
-                ? "Shared library updated on this computer"
-                : "Your library is current",
+          if (deviceRecords && deviceRecords.length > 0) {
+            const pending = readWebLibraryOutbox();
+            if (
+              webSharedLibraryDirtyRef.current &&
+              pending.length === 0
+            ) {
+              const authoritative = materializeWebLibraryDeviceRecords(
+                deviceRecords,
+                currentTimestamp(),
+              ) as { payload: WebSharedLibraryPayload };
+              const localPayload = webSharedLibraryLocalRef.current;
+              const intentBase = webSharedLibraryBaseRef.current || {
+                version: 1 as const,
+                updatedAt: 0,
+                templates: [],
+                quicktexts: [],
+                vocabulary: [],
+              };
+              const localIntent = localPayload
+                ? diffWebLibraryPayload(intentBase, localPayload)
+                : [];
+              if (
+                !localPayload ||
+                !payloadContainsWebLibraryMutations(
+                  authoritative.payload,
+                  localIntent,
+                )
+              ) {
+                setTemplateStorageStatus("Browser changes waiting to sync");
+                setWritingToolsStorageStatus("Browser changes waiting to sync");
+                setWebSharedLibraryStatus(
+                  "Browser changes preserved · retry sync",
+                );
+                if (showFeedback) {
+                  setToast("Local changes are preserved and waiting to sync");
+                }
+                return;
+              }
+            }
+            const deviceId = webLibraryDeviceIdRef.current;
+            const remoteOwnRecord = deviceRecords.find(
+              (record) => record.deviceId === deviceId,
             );
+            let localRecord = remoteOwnRecord ||
+              createEmptyWebLibraryDeviceRecord(
+                deviceId,
+                currentTimestamp(),
+              ) as WebLibraryDeviceRecord;
+            if (pending.length > 0 && webLibraryDeviceRecordRef.current) {
+              localRecord = mergeWebLibraryDeviceRecords(
+                [localRecord, webLibraryDeviceRecordRef.current],
+                deviceId,
+              ) as WebLibraryDeviceRecord;
+            }
+            if (pending.length > 0) {
+              localRecord = applyWebLibraryOperations(
+                localRecord,
+                pending,
+                currentTimestamp(),
+              ) as WebLibraryDeviceRecord;
+            }
+            const recordsWithPending = [
+              ...deviceRecords.filter((record) => record.deviceId !== deviceId),
+              localRecord,
+            ];
+            const materialized = materializeWebLibraryDeviceRecords(
+              recordsWithPending,
+              currentTimestamp(),
+            ) as {
+              payload: WebSharedLibraryPayload;
+              heads: Map<string, WebLibraryOperation[]>;
+              conflicts: WebLibraryConflict[];
+            };
+            const remotePayload = parseWebSharedLibraryPayload(
+              JSON.stringify(materialized.payload),
+            );
+            if (!remotePayload) {
+              throw new Error("The online device library is invalid");
+            }
+            const canonicalWasAlreadyHandled = canonicalState
+              ? deviceRecords.some((record) =>
+                  record.canonicalFingerprints.includes(
+                    canonicalState.fingerprint,
+                  ),
+                )
+              : true;
+            const needsLegacyImport = !canonicalWasAlreadyHandled;
+            let displayedPayload = remotePayload;
+            let legacyConflictCount = 0;
+            if (canonicalState && needsLegacyImport) {
+              const legacyMerge = mergeWebSharedLibrary({
+                base: null,
+                remote: remotePayload,
+                local: canonicalState.payload,
+                now: webLibraryConflictSeed(canonicalState.fingerprint),
+              });
+              const parsedLegacyMerge = parseWebSharedLibraryPayload(
+                JSON.stringify(legacyMerge.payload),
+              );
+              if (!parsedLegacyMerge) {
+                throw new Error("The older-tab library update is invalid");
+              }
+              displayedPayload = parsedLegacyMerge;
+              legacyConflictCount = legacyMerge.conflicts.length;
+            }
+            if (
+              cancelled ||
+              webSharedLibrarySavingRef.current ||
+              refreshEpoch !== webLibraryRefreshEpochRef.current ||
+              mutationEpoch !== webSharedLibraryMutationEpochRef.current
+            ) {
+              return;
+            }
+
+            webLibraryDeviceRecordRef.current = localRecord;
+            webLibraryHeadsRef.current = materialized.heads;
+            webLibraryConflictsRef.current = materialized.conflicts;
+            window.localStorage.setItem(
+              storageKeys.webLibraryDeviceRecord,
+              stableWebLibraryJson(localRecord),
+            );
+            const hasPending = pending.length > 0;
+            const previousPayload = webSharedLibraryLocalRef.current;
+            const contentsChanged =
+              !previousPayload ||
+              stableWebLibraryJson({
+                  templates: previousPayload.templates,
+                quicktexts: previousPayload.quicktexts,
+                vocabulary: previousPayload.vocabulary,
+              }) !==
+                stableWebLibraryJson({
+                  templates: displayedPayload.templates,
+                  quicktexts: displayedPayload.quicktexts,
+                  vocabulary: displayedPayload.vocabulary,
+                });
+            persistWebLibraryLocally(displayedPayload, {
+              dirty: hasPending || needsLegacyImport,
+              ...(hasPending ? {} : { base: remotePayload }),
+              snapshotReason:
+                contentsChanged && !hasPending && !needsLegacyImport
+                  ? "Updated from online library"
+                  : undefined,
+            });
+            const conflictCount =
+              materialized.conflicts.length + legacyConflictCount;
+            setSyncConflictNotice(
+              conflictCount > 0
+                ? `${conflictCount} competing edit${
+                    conflictCount === 1 ? " was" : "s were"
+                  } preserved as conflict copies.`
+                : "",
+            );
+            setTemplateStorageStatus(
+              needsLegacyImport
+                ? webLibraryOwnerKeyRef.current
+                  ? "Importing an update from an older tab"
+                  : "Older-tab update waiting for owner access"
+                : hasPending
+                ? "Browser changes waiting to sync"
+                : webLibraryOwnerKeyRef.current
+                  ? "Saved everywhere"
+                  : "View only",
+            );
+            setWritingToolsStorageStatus(
+              needsLegacyImport
+                ? webLibraryOwnerKeyRef.current
+                  ? "Importing an update from an older tab"
+                  : "Older-tab update waiting for owner access"
+                : hasPending
+                ? "Browser changes waiting to sync"
+                : webLibraryOwnerKeyRef.current
+                  ? "Saved everywhere"
+                  : "View only",
+            );
+            setWebSharedLibraryStatus(
+              needsLegacyImport
+                ? webLibraryOwnerKeyRef.current
+                  ? "Preserving an update from an older ScribeFlow tab…"
+                  : "Older-tab update preserved · owner access needed"
+                : hasPending
+                ? "Browser changes preserved · retry sync"
+                : conflictCount > 0
+                  ? "Competing edits preserved as conflict copies"
+                  : webLibraryOwnerKeyRef.current
+                    ? "Your library is current"
+                    : "View only · owner key required to edit",
+            );
+            if (showFeedback) {
+              setToast(
+                needsLegacyImport
+                  ? "An older-tab update was preserved"
+                  : hasPending
+                  ? "Local changes are preserved and waiting to sync"
+                  : conflictCount > 0
+                    ? "Competing edits were preserved"
+                    : "Your library is current",
+              );
+            }
+            if (needsLegacyImport && webLibraryOwnerKeyRef.current) {
+              saveWebSharedLibraryRef.current?.(
+                displayedPayload.templates,
+                displayedPayload.quicktexts,
+                displayedPayload.vocabulary,
+                Math.max(currentTimestamp(), displayedPayload.updatedAt + 1),
+              );
+            }
+            return;
+          }
+
+          const remotePayload: WebSharedLibraryPayload | null =
+            canonicalState?.payload || null;
+          let fallbackPayload: WebSharedLibraryPayload | null = null;
+          if (!remotePayload) {
+            try {
+              const response = await fetch(
+                `${webSharedLibraryFallbackUrl()}?refresh=${currentTimestamp()}`,
+                { cache: "no-store" },
+              );
+              if (response.ok) {
+                fallbackPayload = parseWebSharedLibraryPayload(
+                  await response.text(),
+                );
+              }
+            } catch {
+              fallbackPayload = null;
+            }
+          }
+          if (
+            cancelled ||
+            webSharedLibrarySavingRef.current ||
+            refreshEpoch !== webLibraryRefreshEpochRef.current ||
+            mutationEpoch !== webSharedLibraryMutationEpochRef.current
+          ) {
+            return;
+          }
+
+          const localPayload = webSharedLibraryLocalRef.current;
+          if (!localPayload) throw new Error("Local library is invalid");
+          if (remotePayload) {
+            let migrationPayload = remotePayload;
+            let migrationConflicts = 0;
+            if (webSharedLibraryDirtyRef.current) {
+              const merged = mergeWebSharedLibrary({
+                base: webSharedLibraryBaseRef.current,
+                remote: remotePayload,
+                local: localPayload,
+              });
+              migrationPayload = merged.payload as WebSharedLibraryPayload;
+              migrationConflicts = merged.conflicts.length;
+            }
+            const needsMigration = Boolean(webLibraryOwnerKeyRef.current);
+            persistWebLibraryLocally(migrationPayload, {
+              dirty: needsMigration || webSharedLibraryDirtyRef.current,
+              base: remotePayload,
+              snapshotReason: "Prepared collision-safe online library",
+            });
+            setSyncConflictNotice(
+              migrationConflicts > 0
+                ? `${migrationConflicts} competing edit${
+                    migrationConflicts === 1 ? " was" : "s were"
+                  } preserved as conflict copies.`
+                : "",
+            );
+            setTemplateStorageStatus(
+              needsMigration ? "Preparing safer cross-PC sync" : "View only",
+            );
+            setWritingToolsStorageStatus(
+              needsMigration ? "Preparing safer cross-PC sync" : "View only",
+            );
+            setWebSharedLibraryStatus(
+              needsMigration
+                ? "Upgrading shared library safely…"
+                : "View only · owner key required to edit",
+            );
+            if (showFeedback) {
+              setToast(needsMigration ? "Preparing safer sync" : "Library loaded");
+            }
+            if (needsMigration && deviceRecords) {
+              saveWebSharedLibraryRef.current?.(
+                migrationPayload.templates,
+                migrationPayload.quicktexts,
+                migrationPayload.vocabulary,
+                Math.max(currentTimestamp(), migrationPayload.updatedAt + 1),
+              );
+            }
+          } else if (
+            fallbackPayload &&
+            !webSharedLibraryDirtyRef.current &&
+            fallbackPayload.updatedAt > localPayload.updatedAt
+          ) {
+            persistWebLibraryLocally(fallbackPayload, {
+              dirty: false,
+              snapshotReason: "Loaded bundled backup",
+            });
+            setTemplateStorageStatus("Loaded from backup");
+            setWritingToolsStorageStatus("Loaded from backup");
+            setWebSharedLibraryStatus(
+              "Bundled backup loaded · online library unavailable",
+            );
+            if (showFeedback) setToast("Bundled library backup loaded");
+          } else {
+            setWebSharedLibraryStatus(
+              webSharedLibraryDirtyRef.current
+                ? "Offline · browser changes safely preserved"
+                : "Offline · using the latest browser copy",
+            );
+            if (showFeedback) {
+              setToast("Online library unavailable; browser copy kept");
+            }
           }
         } catch {
           if (!cancelled) {
-            setWebSharedLibraryStatus("Could not reach your shared library");
+            setWebSharedLibraryStatus("Library check failed · browser copy kept");
             if (showFeedback) {
-              setToast("Shared library could not be checked");
+              setToast("Library check failed; browser copy kept");
             }
           }
         } finally {
@@ -2769,16 +3684,27 @@ export default function Home() {
           void refreshWebSharedLibrary();
         }
       };
+      const refreshAfterSiblingTabWrite = (event: StorageEvent) => {
+        if (
+          event.key === storageKeys.webLibraryDeviceRecord ||
+          event.key?.startsWith(webLibraryOutboxPrefix)
+        ) {
+          lastAutomaticRefreshAt = 0;
+          void refreshWebSharedLibrary();
+        }
+      };
       const timer = window.setInterval(() => {
         void refreshWebSharedLibrary();
-      }, 60000);
+      }, 300_000);
       void refreshWebSharedLibrary();
       window.addEventListener("focus", refreshWhenVisible);
+      window.addEventListener("storage", refreshAfterSiblingTabWrite);
       document.addEventListener("visibilitychange", refreshWhenVisible);
       return () => {
         cancelled = true;
         window.clearInterval(timer);
         window.removeEventListener("focus", refreshWhenVisible);
+        window.removeEventListener("storage", refreshAfterSiblingTabWrite);
         document.removeEventListener("visibilitychange", refreshWhenVisible);
         refreshSharedLibraryRef.current = null;
       };
@@ -2893,7 +3819,14 @@ export default function Home() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       refreshSharedLibraryRef.current = null;
     };
-  }, [templatesReady, writingToolsReady]);
+  }, [
+    fetchWebSharedCanonical,
+    fetchWebLibraryDeviceRecords,
+    persistWebLibraryLocally,
+    readWebLibraryOutbox,
+    templatesReady,
+    writingToolsReady,
+  ]);
 
   useEffect(() => {
     if (webEdition) return;
@@ -2957,9 +3890,12 @@ export default function Home() {
       return whisperLoadPromiseRef.current;
     }
 
-    whisperLoadPromiseRef.current = fetch("http://127.0.0.1:3002/", {
-      cache: "no-store",
-    })
+    whisperLoadPromiseRef.current = fetch(
+      "http://127.0.0.1:3001/whisper/native-health",
+      {
+        cache: "no-store",
+      },
+    )
       .then((response) => {
         if (!response.ok) {
           throw new Error("The native Whisper service is not ready");
@@ -3026,7 +3962,11 @@ export default function Home() {
 
   useEffect(() => {
     if (webEdition) return;
-    void refreshWhisperInstallStatus();
+    const timer = window.setTimeout(
+      () => void refreshWhisperInstallStatus(),
+      0,
+    );
+    return () => window.clearTimeout(timer);
   }, [refreshWhisperInstallStatus]);
 
   useEffect(() => {
@@ -3055,15 +3995,18 @@ export default function Home() {
       return;
     }
 
-    setStatus("Starting local Whisper");
     const connect = () => {
+      setStatus("Starting local Whisper");
       void ensureWhisperWorker()
         .then(() => setStatus("Ready · Whisper local"))
         .catch(() => setStatus("Starting local Whisper"));
     };
-    connect();
+    const connectTimer = window.setTimeout(connect, 0);
     const timer = window.setInterval(connect, 3000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(connectTimer);
+      window.clearInterval(timer);
+    };
   }, [
     dictationEngine,
     ensureWhisperWorker,
@@ -3075,20 +4018,25 @@ export default function Home() {
   useEffect(() => {
     if (webEdition) return;
     if (dictationEngine !== "whisper" || whisperReady) return;
-    if (whisperInstallStatus.status === "installing") {
-      setStatus("Installing Whisper locally");
-    } else if (
-      whisperInstallStatus.status === "missing" ||
-      whisperInstallStatus.status === "failed"
-    ) {
-      setStatus("Whisper installation recommended");
-    }
+    const nextStatus =
+      whisperInstallStatus.status === "installing"
+        ? "Installing Whisper locally"
+        : whisperInstallStatus.status === "missing" ||
+            whisperInstallStatus.status === "failed"
+          ? "Whisper installation recommended"
+          : null;
+    if (!nextStatus) return;
+    const timer = window.setTimeout(() => setStatus(nextStatus), 0);
+    return () => window.clearTimeout(timer);
   }, [dictationEngine, whisperInstallStatus.status, whisperReady]);
 
   useEffect(() => {
-    if (whisperInstallStatus.status !== "update_available") {
-      setWhisperUpdatePromptDismissed(false);
-    }
+    if (whisperInstallStatus.status === "update_available") return;
+    const timer = window.setTimeout(
+      () => setWhisperUpdatePromptDismissed(false),
+      0,
+    );
+    return () => window.clearTimeout(timer);
   }, [whisperInstallStatus.status]);
 
   useEffect(
@@ -3145,7 +4093,7 @@ export default function Home() {
           .slice(0, 1800),
       );
 
-      return fetch("http://127.0.0.1:3002/inference", {
+      return fetch("http://127.0.0.1:3001/whisper/inference", {
         method: "POST",
         body: formData,
       })
@@ -3631,7 +4579,7 @@ export default function Home() {
           energy += input[index] * input[index];
         }
         const rms = Math.sqrt(energy / input.length);
-        const now = Date.now();
+        const now = currentTimestamp();
         if (rms >= 0.012) {
           whisperHasSpeechRef.current = true;
           whisperLastVoiceAtRef.current = now;
@@ -3847,6 +4795,24 @@ export default function Home() {
     window.requestAnimationFrame(() => noteRef.current?.focus());
   }
 
+  function requireWebLibraryOwner() {
+    if (
+      webEdition &&
+      !(navigator as Navigator & { locks?: { request?: unknown } }).locks
+        ?.request
+    ) {
+      setWebSharedLibraryStatus(
+        "Editing is paused because this browser cannot safely coordinate tabs",
+      );
+      setToast("Open ScribeFlow in current Chrome or Edge to edit safely");
+      return false;
+    }
+    if (!webEdition || webLibraryOwnerKeyRef.current) return true;
+    setShowWebLibraryManager(true);
+    setToast("Owner access is required to edit reusable library fields");
+    return false;
+  }
+
   function saveWebSharedLibrary(
     nextTemplates: Template[],
     nextQuicktexts: Quicktext[],
@@ -3861,42 +4827,646 @@ export default function Home() {
       quicktexts: nextQuicktexts,
       vocabulary: nextVocabulary,
     };
+    const ownerKey = webLibraryOwnerKeyRef.current;
+    if (!ownerKey) {
+      setTemplateStorageStatus("View only · owner key required");
+      setWritingToolsStorageStatus("View only · owner key required");
+      setWebSharedLibraryStatus("Owner key required to sync changes");
+      setShowWebLibraryManager(true);
+      setToast("Add the owner key before editing the shared library");
+      return;
+    }
+    const lockManager = (
+      navigator as Navigator & { locks?: { request?: unknown } }
+    ).locks;
+    if (!lockManager?.request) {
+      setTemplateStorageStatus("Safe multi-tab sync needs Chrome or Edge");
+      setWritingToolsStorageStatus("Safe multi-tab sync needs Chrome or Edge");
+      setWebSharedLibraryStatus(
+        "Editing is paused because this browser cannot safely coordinate tabs",
+      );
+      setToast("Open ScribeFlow in current Chrome or Edge to edit safely");
+      return;
+    }
+    const previousPayload = webSharedLibraryLocalRef.current;
+    const knownHeadsAtEdit = new Map(
+      Array.from(webLibraryHeadsRef.current.entries(), ([key, heads]) => [
+        key,
+        [...heads],
+      ]),
+    );
+    try {
+      queueWebLibraryMutations(previousPayload, sharedPayload);
+    } catch {
+      setToast("Browser copy kept; trying the online save directly");
+    }
+    webSharedLibraryMutationEpochRef.current += 1;
+    const saveEpoch = webSharedLibraryMutationEpochRef.current;
+    webLibraryRefreshEpochRef.current += 1;
+    try {
+      persistWebLibraryLocally(sharedPayload, {
+        dirty: true,
+        snapshotReason: "Saved in this browser",
+      });
+    } catch {
+      webSharedLibraryLocalRef.current = sharedPayload;
+      webSharedLibraryDirtyRef.current = true;
+      setWebLibraryDirty(true);
+      try {
+        window.localStorage.setItem(storageKeys.webLibraryDirty, "true");
+      } catch {
+        // The in-memory copy remains available for the immediate save attempt.
+      }
+    }
+    if (
+      utf8ByteLength(JSON.stringify(sharedPayload)) > WEB_LIBRARY_MAX_BYTES
+    ) {
+      setTemplateStorageStatus("Library too large to sync");
+      setWritingToolsStorageStatus("Library too large to sync");
+      setWebSharedLibraryStatus(
+        "Library too large to sync · browser changes preserved",
+      );
+      setToast(
+        "Library too large to sync; reduce reusable content and retry",
+      );
+      return;
+    }
     setTemplateStorageStatus("Saving everywhere…");
     setWritingToolsStorageStatus("Saving everywhere…");
     setWebSharedLibraryStatus("Saving your changes everywhere…");
     webSharedLibrarySavingRef.current = true;
+    setWebLibrarySaving(true);
 
     const savePromise = webSharedLibrarySaveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        const response = await fetch(webSharedLibraryUrl(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(sharedPayload),
+        return withWebLibraryWriteLock(async () => {
+          const activeOwnerKey = webLibraryOwnerKeyRef.current;
+          if (!activeOwnerKey) {
+            const error = new Error("Owner key required") as Error & {
+              status?: number;
+            };
+            error.status = 401;
+            throw error;
+          }
+          const deviceId = webLibraryDeviceIdRef.current;
+          const actorId = webLibraryActorIdRef.current;
+          const [initialRecords, canonicalState] = await Promise.all([
+            fetchWebLibraryDeviceRecords(),
+            fetchWebSharedCanonical().catch(() => null),
+          ]);
+          let records = initialRecords;
+          const remoteOwnRecord = records.find(
+            (record) => record.deviceId === deviceId,
+          );
+          const recordCandidates: WebLibraryDeviceRecord[] = [];
+          if (remoteOwnRecord) recordCandidates.push(remoteOwnRecord);
+          if (webLibraryDeviceRecordRef.current) {
+            recordCandidates.push(webLibraryDeviceRecordRef.current);
+          }
+          let ownRecord =
+            recordCandidates.length > 0
+              ? (mergeWebLibraryDeviceRecords(
+                  recordCandidates,
+                  deviceId,
+                ) as WebLibraryDeviceRecord)
+              : (createEmptyWebLibraryDeviceRecord(
+                  deviceId,
+                  currentTimestamp(),
+                ) as WebLibraryDeviceRecord);
+
+          const pending = readWebLibraryOutbox();
+          const processedIds = new Set(pending.map((entry) => entry.mutationId));
+          if (pending.length > 0) {
+            ownRecord = applyWebLibraryOperations(
+              ownRecord,
+              pending,
+              currentTimestamp(),
+            ) as WebLibraryDeviceRecord;
+          }
+
+          if (records.length === 0 && pending.length === 0) {
+            const payload = webSharedLibraryLocalRef.current || sharedPayload;
+            const seedMutations = diffWebLibraryPayload(
+              { version: 1, updatedAt: 0, templates: [], quicktexts: [], vocabulary: [] },
+              payload,
+            ) as Array<{
+              collection: WebLibraryCollection;
+              itemId: string;
+              tombstone: boolean;
+              value?: Template | Quicktext | VocabularyItem;
+            }>;
+            const seedOperations: WebLibraryOperation[] = seedMutations.map(
+              (mutation) => {
+                webLibraryActorCounterRef.current += 1;
+                return createWebLibraryOperation({
+                  ...mutation,
+                  actorId,
+                  counter: webLibraryActorCounterRef.current,
+                  context: {},
+                }) as WebLibraryOperation;
+              },
+            );
+            ownRecord = applyWebLibraryOperations(
+              ownRecord,
+              seedOperations,
+              currentTimestamp(),
+            ) as WebLibraryDeviceRecord;
+          }
+
+          let beforeNormalization = materializeWebLibraryDeviceRecords(
+            [
+              ...records.filter((record) => record.deviceId !== deviceId),
+              ownRecord,
+            ],
+            currentTimestamp(),
+          ) as {
+            payload: WebSharedLibraryPayload;
+            heads: Map<string, WebLibraryOperation[]>;
+            conflicts: WebLibraryConflict[];
+          };
+          const desiredPayload =
+            webSharedLibraryLocalRef.current || sharedPayload;
+          const intentBase = webSharedLibraryBaseRef.current || {
+            version: 1 as const,
+            updatedAt: 0,
+            templates: [],
+            quicktexts: [],
+            vocabulary: [],
+          };
+          const intendedMutations = diffWebLibraryPayload(
+            intentBase,
+            desiredPayload,
+          ) as Array<{
+            collection: WebLibraryCollection;
+            itemId: string;
+            tombstone: boolean;
+            value?: Template | Quicktext | VocabularyItem;
+          }>;
+          const recoveryOperations: WebLibraryOperation[] = [];
+          for (const mutation of intendedMutations) {
+            const pendingForItem = pending.filter(
+              (operation) =>
+                operation.collection === mutation.collection &&
+                operation.itemId === mutation.itemId,
+            );
+            const pendingAlreadyCarriesIntent = pendingForItem.some(
+              (operation) =>
+                operation.tombstone === mutation.tombstone &&
+                (mutation.tombstone ||
+                  stableWebLibraryJson(operation.value) ===
+                    stableWebLibraryJson(mutation.value)),
+            );
+            if (pendingAlreadyCarriesIntent) continue;
+            const materializedItem = (
+              beforeNormalization.payload[mutation.collection] as Array<
+                Template | Quicktext | VocabularyItem
+              >
+            ).find((item) => item.id === mutation.itemId);
+            const materializedAlreadyCarriesIntent = mutation.tombstone
+              ? !materializedItem
+              : stableWebLibraryJson(materializedItem) ===
+                stableWebLibraryJson(mutation.value);
+            if (materializedAlreadyCarriesIntent) continue;
+
+            const groupKey = `${mutation.collection}\u0000${mutation.itemId}`;
+            const context = webLibraryContextFromOperations([
+              ...(knownHeadsAtEdit.get(groupKey) || []),
+              ...pendingForItem,
+            ]) as Record<string, number>;
+            webLibraryActorCounterRef.current += 1;
+            recoveryOperations.push(
+              createWebLibraryOperation({
+                ...mutation,
+                actorId,
+                counter: webLibraryActorCounterRef.current,
+                context,
+              }) as WebLibraryOperation,
+            );
+          }
+          if (recoveryOperations.length > 0) {
+            ownRecord = applyWebLibraryOperations(
+              ownRecord,
+              recoveryOperations,
+              currentTimestamp(),
+            ) as WebLibraryDeviceRecord;
+            beforeNormalization = materializeWebLibraryDeviceRecords(
+              [
+                ...records.filter((record) => record.deviceId !== deviceId),
+                ownRecord,
+              ],
+              currentTimestamp(),
+            ) as {
+              payload: WebSharedLibraryPayload;
+              heads: Map<string, WebLibraryOperation[]>;
+              conflicts: WebLibraryConflict[];
+            };
+          }
+          let canonicalWasAlreadyHandled = [
+            ...records,
+            ownRecord,
+          ].some((record) =>
+            record.canonicalFingerprints.includes(
+              canonicalState?.fingerprint || "",
+            ),
+          );
+          if (canonicalState && !canonicalWasAlreadyHandled) {
+            try {
+              const markerRefresh = await fetchWebLibraryDeviceRecords();
+              canonicalWasAlreadyHandled = markerRefresh.some((record) =>
+                record.canonicalFingerprints.includes(
+                  canonicalState.fingerprint,
+                ),
+              );
+            } catch {
+              // The additive import below is safe if the marker check is offline.
+            }
+          }
+          if (
+            canonicalState &&
+            !canonicalWasAlreadyHandled
+          ) {
+            // A v1 tab replaces the whole canonical record. With no revision
+            // token, treat its additions and edits as additive and never turn
+            // missing items into deletes that could erase newer v2 work.
+            const legacyMerge = mergeWebSharedLibrary({
+              base: null,
+              remote: beforeNormalization.payload,
+              local: canonicalState.payload,
+              now: webLibraryConflictSeed(canonicalState.fingerprint),
+            });
+            const legacyMutations = diffWebLibraryPayload(
+              beforeNormalization.payload,
+              legacyMerge.payload,
+            ) as Array<{
+              collection: WebLibraryCollection;
+              itemId: string;
+              tombstone: boolean;
+              value?: Template | Quicktext | VocabularyItem;
+            }>;
+            const legacyOperations: WebLibraryOperation[] = [];
+            for (const mutation of legacyMutations) {
+              if (mutation.tombstone) continue;
+              const groupKey = `${mutation.collection}\u0000${mutation.itemId}`;
+              webLibraryActorCounterRef.current += 1;
+              legacyOperations.push(
+                createWebLibraryOperation({
+                  ...mutation,
+                  actorId,
+                  counter: webLibraryActorCounterRef.current,
+                  context: webLibraryContextFromOperations(
+                    beforeNormalization.heads.get(groupKey) || [],
+                  ) as Record<string, number>,
+                }) as WebLibraryOperation,
+              );
+            }
+            if (legacyOperations.length > 0) {
+              ownRecord = applyWebLibraryOperations(
+                ownRecord,
+                legacyOperations,
+                currentTimestamp(),
+              ) as WebLibraryDeviceRecord;
+            }
+            ownRecord = {
+              ...ownRecord,
+              canonicalFingerprints: collectCanonicalFingerprints(
+                [...records, ownRecord],
+                [canonicalState.fingerprint],
+              ),
+            };
+            beforeNormalization = materializeWebLibraryDeviceRecords(
+              [
+                ...records.filter((record) => record.deviceId !== deviceId),
+                ownRecord,
+              ],
+              currentTimestamp(),
+            ) as {
+              payload: WebSharedLibraryPayload;
+              heads: Map<string, WebLibraryOperation[]>;
+              conflicts: WebLibraryConflict[];
+            };
+          }
+          const normalizationOperations: WebLibraryOperation[] = [];
+          for (const conflict of beforeNormalization.conflicts) {
+            const sourceContext = webLibraryContextFromOperations(
+              conflict.heads,
+            ) as Record<string, number>;
+            webLibraryActorCounterRef.current += 1;
+            normalizationOperations.push(
+              createWebLibraryOperation({
+                collection: conflict.collection,
+                itemId: conflict.itemId,
+                actorId,
+                counter: webLibraryActorCounterRef.current,
+                context: sourceContext,
+                tombstone: false,
+                value: conflict.primary,
+              }) as WebLibraryOperation,
+            );
+            for (const copy of conflict.copies) {
+              const copyKey = `${conflict.collection}\u0000${copy.conflictId}`;
+              if ((beforeNormalization.heads.get(copyKey) || []).length > 0) {
+                continue;
+              }
+              webLibraryActorCounterRef.current += 1;
+              normalizationOperations.push(
+                createWebLibraryOperation({
+                  collection: conflict.collection,
+                  itemId: copy.conflictId,
+                  actorId,
+                  counter: webLibraryActorCounterRef.current,
+                  context: {},
+                  tombstone: false,
+                  value: copy.value,
+                }) as WebLibraryOperation,
+              );
+            }
+          }
+          if (normalizationOperations.length > 0) {
+            ownRecord = applyWebLibraryOperations(
+              ownRecord,
+              normalizationOperations,
+              currentTimestamp(),
+            ) as WebLibraryDeviceRecord;
+          }
+          ownRecord = pruneCoveredWebLibraryOperations(
+            ownRecord,
+            [
+              ...records.filter((record) => record.deviceId !== deviceId),
+              ownRecord,
+            ],
+            currentTimestamp(),
+          ) as WebLibraryDeviceRecord;
+          ownRecord = {
+            ...ownRecord,
+            canonicalFingerprints: collectCanonicalFingerprints(
+              [...records, ownRecord],
+              canonicalState ? [canonicalState.fingerprint] : [],
+            ),
+          };
+
+          const serializedRecord = stableWebLibraryJson(ownRecord);
+          if (utf8ByteLength(serializedRecord) > WEB_LIBRARY_DEVICE_MAX_BYTES) {
+            const error = new Error("Library device record too large") as Error & {
+              code?: string;
+            };
+            error.code = "library-too-large";
+            throw error;
+          }
+          webLibraryDeviceRecordRef.current = ownRecord;
+          window.localStorage.setItem(
+            storageKeys.webLibraryDeviceRecord,
+            serializedRecord,
+          );
+
+          const writeResponse = await fetch(webSharedLibraryDeviceUrl(deviceId), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Mantle-Key": activeOwnerKey,
+            },
+            body: serializedRecord,
+          });
+          if (!writeResponse.ok) {
+            const error = new Error("Shared library save failed") as Error & {
+              status?: number;
+            };
+            error.status = writeResponse.status;
+            throw error;
+          }
+          const visibilityResponse = await fetch(
+            webSharedLibraryDeviceVisibilityUrl(deviceId),
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Mantle-Key": activeOwnerKey,
+              },
+              body: JSON.stringify({ public_read: true }),
+            },
+          );
+          if (!visibilityResponse.ok) {
+            throw new Error("The browser library record is not publicly readable");
+          }
+          const verifyResponse = await fetch(
+            `${webSharedLibraryDeviceUrl(deviceId)}?verify=${currentTimestamp()}`,
+            { cache: "no-store" },
+          );
+          if (!verifyResponse.ok) {
+            throw new Error("The browser library record could not be verified");
+          }
+          let verifiedRecord = parseWebLibraryDeviceRecordForApp(
+            await verifyResponse.text(),
+          );
+          if (
+            !verifiedRecord ||
+            stableWebLibraryJson(verifiedRecord) !== serializedRecord
+          ) {
+            throw new Error("The browser library verification did not match");
+          }
+
+          try {
+            records = await fetchWebLibraryDeviceRecords();
+          } catch {
+            records = records.filter((record) => record.deviceId !== deviceId);
+          }
+          records = [
+            ...records.filter((record) => record.deviceId !== deviceId),
+            verifiedRecord,
+          ];
+          const finalMaterialized = materializeWebLibraryDeviceRecords(
+            records,
+            currentTimestamp(),
+          ) as {
+            payload: WebSharedLibraryPayload;
+            heads: Map<string, WebLibraryOperation[]>;
+            conflicts: WebLibraryConflict[];
+          };
+          const finalPayload = parseWebSharedLibraryPayload(
+            JSON.stringify(finalMaterialized.payload),
+          );
+          if (!finalPayload) {
+            throw new Error("The merged online library is invalid");
+          }
+
+          const canonicalBody = JSON.stringify(finalPayload);
+          const canonicalFingerprint = await fingerprintWebLibrary(finalPayload);
+          if (
+            !verifiedRecord.canonicalFingerprints.includes(
+              canonicalFingerprint,
+            )
+          ) {
+            const markedRecord: WebLibraryDeviceRecord = {
+              ...verifiedRecord,
+              canonicalFingerprints: collectCanonicalFingerprints(
+                records,
+                [canonicalFingerprint],
+              ),
+            };
+            const serializedMarkedRecord = stableWebLibraryJson(markedRecord);
+            if (
+              utf8ByteLength(serializedMarkedRecord) >
+              WEB_LIBRARY_DEVICE_MAX_BYTES
+            ) {
+              const error = new Error(
+                "Library device record too large",
+              ) as Error & { code?: string };
+              error.code = "library-too-large";
+              throw error;
+            }
+            const markerWriteResponse = await fetch(
+              webSharedLibraryDeviceUrl(deviceId),
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Mantle-Key": activeOwnerKey,
+                },
+                body: serializedMarkedRecord,
+              },
+            );
+            if (!markerWriteResponse.ok) {
+              throw new Error("The compatibility marker could not be saved");
+            }
+            const markerVerifyResponse = await fetch(
+              `${webSharedLibraryDeviceUrl(deviceId)}?marker=${currentTimestamp()}`,
+              { cache: "no-store" },
+            );
+            const markerVerifiedRecord = markerVerifyResponse.ok
+              ? parseWebLibraryDeviceRecordForApp(
+                  await markerVerifyResponse.text(),
+                )
+              : null;
+            if (
+              !markerVerifiedRecord ||
+              stableWebLibraryJson(markerVerifiedRecord) !==
+                serializedMarkedRecord
+            ) {
+              throw new Error("The compatibility marker could not be verified");
+            }
+            verifiedRecord = markerVerifiedRecord;
+          }
+          const latestCanonicalState = await fetchWebSharedCanonical().catch(
+            () => null,
+          );
+          if (
+            latestCanonicalState &&
+            latestCanonicalState.fingerprint !== canonicalFingerprint &&
+            latestCanonicalState.fingerprint !== canonicalState?.fingerprint
+          ) {
+            const error = new Error(
+              "The older compatibility library changed during this save",
+            ) as Error & { code?: string };
+            error.code = "canonical-changed";
+            throw error;
+          }
+          if (utf8ByteLength(canonicalBody) <= WEB_LIBRARY_MAX_BYTES) {
+            try {
+              await fetch(webSharedLibraryUrl(), {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Mantle-Key": activeOwnerKey,
+                },
+                body: canonicalBody,
+              });
+            } catch {
+              // The canonical v1 record is compatibility-only in protocol v2.
+            }
+          }
+
+          clearWebLibraryOutboxEntries(processedIds);
+          webLibraryDeviceRecordRef.current = verifiedRecord;
+          webLibraryHeadsRef.current = finalMaterialized.heads;
+          webLibraryConflictsRef.current = finalMaterialized.conflicts;
+          window.localStorage.setItem(
+            storageKeys.webLibraryDeviceRecord,
+            stableWebLibraryJson(verifiedRecord),
+          );
+
+          const remaining = readWebLibraryOutbox();
+          const savedLatestLocal =
+            remaining.length === 0 &&
+            saveEpoch === webSharedLibraryMutationEpochRef.current;
+          if (savedLatestLocal) {
+            persistWebLibraryLocally(finalPayload, {
+              dirty: false,
+              base: finalPayload,
+              snapshotReason: "Saved online",
+            });
+          }
+          const conflictCount = finalMaterialized.conflicts.length;
+          setSyncConflictNotice(
+            conflictCount > 0
+              ? `${conflictCount} competing edit${
+                  conflictCount === 1 ? " was" : "s were"
+                } preserved as conflict copies.`
+              : "",
+          );
+          return savedLatestLocal;
         });
-        if (!response.ok) {
-          throw new Error("Shared library save failed");
-        }
-        webSharedLibraryUpdatedAtRef.current = updatedAt;
       });
     webSharedLibrarySaveQueueRef.current = savePromise;
     void savePromise
-      .then(() => {
-        setTemplateStorageStatus("Saved everywhere");
-        setWritingToolsStorageStatus("Saved everywhere");
-        setWebSharedLibraryStatus("Your library is saved everywhere");
-        setToast("Saved everywhere");
+      .then((savedLatestLocal) => {
+        setTemplateStorageStatus(
+          savedLatestLocal ? "Saved everywhere" : "Browser changes waiting to sync",
+        );
+        setWritingToolsStorageStatus(
+          savedLatestLocal ? "Saved everywhere" : "Browser changes waiting to sync",
+        );
+        setWebSharedLibraryStatus(
+          savedLatestLocal
+            ? "Your library is saved everywhere"
+            : "Newer browser changes are preserved · retry sync",
+        );
+        setToast(
+          savedLatestLocal
+            ? "Saved everywhere"
+            : "Newer browser changes are preserved and still need syncing",
+        );
       })
-      .catch(() => {
-        setTemplateStorageStatus("Could not save everywhere");
-        setWritingToolsStorageStatus("Could not save everywhere");
-        setWebSharedLibraryStatus("Could not save everywhere · try again");
-        setToast("Could not save everywhere · try again");
+      .catch((error: Error & { code?: string; status?: number }) => {
+        const libraryTooLarge = error.code === "library-too-large";
+        const unsafeBrowser = error.code === "web-locks-unavailable";
+        setTemplateStorageStatus(
+          libraryTooLarge
+            ? "Library too large to sync"
+            : unsafeBrowser
+              ? "Safe multi-tab sync unavailable"
+            : "Could not save everywhere",
+        );
+        setWritingToolsStorageStatus(
+          libraryTooLarge
+            ? "Library too large to sync"
+            : unsafeBrowser
+              ? "Safe multi-tab sync unavailable"
+            : "Could not save everywhere",
+        );
+        const keyRejected = error.status === 401 || error.status === 403;
+        setWebSharedLibraryStatus(
+          libraryTooLarge
+            ? "Library too large to sync · browser changes preserved"
+            : unsafeBrowser
+              ? "Editing paused · safe tab coordination unavailable"
+            : keyRejected
+              ? "Owner key rejected · browser changes preserved"
+              : "Could not save online · browser changes preserved",
+        );
+        setToast(
+          libraryTooLarge
+            ? "Library too large to sync; reduce reusable content and retry"
+            : unsafeBrowser
+              ? "Use current Chrome or Edge to edit this shared library"
+            : keyRejected
+              ? "Owner key rejected; update it and retry"
+              : "Online save failed; browser changes are preserved",
+        );
       })
       .finally(() => {
         if (webSharedLibrarySaveQueueRef.current === savePromise) {
           webSharedLibrarySavingRef.current = false;
-          void refreshSharedLibraryRef.current?.();
+          setWebLibrarySaving(false);
         }
       });
   }
@@ -3905,7 +5475,8 @@ export default function Home() {
     nextQuicktexts: Quicktext[],
     nextVocabulary: VocabularyItem[],
   ) {
-    const updatedAt = Date.now();
+    if (!requireWebLibraryOwner()) return;
+    const updatedAt = currentTimestamp();
     const payload: WritingToolsVaultPayload = {
       version: 1,
       updatedAt,
@@ -3973,6 +5544,7 @@ export default function Home() {
   }
 
   function openQuicktextForm(item: Quicktext | null = null) {
+    if (!requireWebLibraryOwner()) return;
     setEditingQuicktext(item);
     setShowQuicktextForm(true);
   }
@@ -4006,7 +5578,7 @@ export default function Home() {
       saveQuicktexts([
         ...quicktexts,
         {
-          id: `${Date.now()}`,
+          id: `${currentTimestamp()}`,
           shortcut: normalizedShortcut,
           title,
           content,
@@ -4032,12 +5604,14 @@ export default function Home() {
   }
 
   function openVocabularyForm(item: VocabularyItem | null = null) {
+    if (!requireWebLibraryOwner()) return;
     setEditingVocabulary(item);
     setLearningHeard("");
     setShowVocabularyForm(true);
   }
 
   function openVoiceLearning() {
+    if (!requireWebLibraryOwner()) return;
     if (!lastRecognizedPhrase) {
       setToast("Dictate a phrase first, then teach its correction");
       return;
@@ -4085,7 +5659,7 @@ export default function Home() {
         saveVocabulary([
           ...vocabulary,
           {
-            id: `vocabulary-${Date.now()}`,
+            id: `vocabulary-${currentTimestamp()}`,
             heard,
             replacement,
           },
@@ -4113,8 +5687,9 @@ export default function Home() {
   }
 
   function saveTemplates(nextTemplates: Template[]) {
+    if (!requireWebLibraryOwner()) return;
     const serializedTemplates = JSON.stringify(nextTemplates);
-    const updatedAt = Date.now();
+    const updatedAt = currentTimestamp();
     const payload: TemplateVaultPayload = {
       version: 1,
       updatedAt,
@@ -4172,6 +5747,7 @@ export default function Home() {
   }
 
   function openTemplateForm(template: Template | null = null) {
+    if (!requireWebLibraryOwner()) return;
     setEditingTemplate(template);
     templateSelectionRef.current = null;
     setShowTemplateForm(true);
@@ -4258,8 +5834,9 @@ export default function Home() {
     const content = (
       templateEditorRef.current?.innerText.replace(/\u00a0/g, " ") || ""
     ).trim();
-    const contentHtml =
-      templateEditorRef.current?.innerHTML.trim() || plainTextToHtml(content);
+    const contentHtml = sanitizeTemplateHtml(
+      templateEditorRef.current?.innerHTML.trim() || plainTextToHtml(content),
+    );
     if (!name || !type || !description || !content) {
       setToast("Complete every template field");
       return;
@@ -4278,7 +5855,7 @@ export default function Home() {
       saveTemplates([
         ...templates,
         {
-          id: `template-${Date.now()}`,
+          id: `template-${currentTimestamp()}`,
           name,
           type,
           description,
@@ -4297,7 +5874,7 @@ export default function Home() {
   function duplicateTemplate(template: Template) {
     const duplicate = {
       ...template,
-      id: `template-${Date.now()}`,
+      id: `template-${currentTimestamp()}`,
       name: `${template.name} copy`,
     };
     saveTemplates([...templates, duplicate]);
@@ -4314,6 +5891,9 @@ export default function Home() {
   }
 
   async function copyNote() {
+    const safeNoteHtml = sanitizeTemplateHtml(
+      noteHtml || plainTextToHtml(note),
+    );
     try {
       if ("ClipboardItem" in window && navigator.clipboard.write) {
         await navigator.clipboard.write([
@@ -4321,7 +5901,7 @@ export default function Home() {
             "text/plain": new Blob([note], {
               type: "text/plain;charset=utf-8",
             }),
-            "text/html": new Blob([noteHtml || plainTextToHtml(note)], {
+            "text/html": new Blob([safeNoteHtml], {
               type: "text/html;charset=utf-8",
             }),
           }),
@@ -4359,6 +5939,95 @@ export default function Home() {
       window.localStorage.removeItem(key),
     );
     window.requestAnimationFrame(() => noteRef.current?.focus());
+  }
+
+  function saveWebLibraryOwnerKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const ownerKey = String(data.get("ownerKey") || "").trim();
+    if (!ownerKey) return;
+    window.localStorage.setItem(storageKeys.webLibraryOwnerKey, ownerKey);
+    webLibraryOwnerKeyRef.current = ownerKey;
+    setWebLibraryOwnerKey(ownerKey);
+    setWebSharedLibraryStatus(
+      webSharedLibraryDirtyRef.current
+        ? "Owner access saved · local changes ready to retry"
+        : "Owner access enabled",
+    );
+    setToast("Owner access saved only on this browser");
+  }
+
+  function forgetWebLibraryOwnerKey() {
+    window.localStorage.removeItem(storageKeys.webLibraryOwnerKey);
+    webLibraryOwnerKeyRef.current = "";
+    setWebLibraryOwnerKey("");
+    setWebSharedLibraryStatus("View only · owner key required to edit");
+    setToast("Owner access removed from this browser");
+  }
+
+  function retryWebLibrarySave() {
+    const payload = webSharedLibraryLocalRef.current;
+    if (!payload || !requireWebLibraryOwner()) return;
+    saveWebSharedLibrary(
+      payload.templates,
+      payload.quicktexts,
+      payload.vocabulary,
+      Math.max(currentTimestamp(), payload.updatedAt + 1),
+    );
+  }
+
+  function exportWebLibrary() {
+    const payload = webSharedLibraryLocalRef.current;
+    if (!payload) return;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `scribeflow-library-${new Date()
+      .toISOString()
+      .slice(0, 10)}.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setToast("Reusable library exported");
+  }
+
+  async function importWebLibrary(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file || !requireWebLibraryOwner()) return;
+    try {
+      const imported = parseWebSharedLibraryPayload(await file.text());
+      if (!imported) throw new Error("Invalid library backup");
+      const payload = { ...imported, updatedAt: currentTimestamp() };
+      rememberWebLibrarySnapshot(
+        webSharedLibraryLocalRef.current || payload,
+        "Before library import",
+      );
+      saveWebSharedLibrary(
+        payload.templates,
+        payload.quicktexts,
+        payload.vocabulary,
+        payload.updatedAt,
+      );
+      setToast("Imported library is being synced");
+    } catch {
+      setToast("That file is not a valid ScribeFlow library backup");
+    }
+  }
+
+  function restoreWebLibrarySnapshot(snapshot: WebLibrarySnapshot) {
+    if (!requireWebLibraryOwner()) return;
+    if (!window.confirm("Restore this reusable library snapshot?")) return;
+    const payload = { ...snapshot.payload, updatedAt: currentTimestamp() };
+    saveWebSharedLibrary(
+      payload.templates,
+      payload.quicktexts,
+      payload.vocabulary,
+      payload.updatedAt,
+    );
+    setToast("Snapshot restored and queued to sync");
   }
 
   function changeDictationEngine(event: ChangeEvent<HTMLSelectElement>) {
@@ -4536,6 +6205,98 @@ export default function Home() {
     : undefined;
 
   useEffect(() => {
+    const whisperUpdateOpen =
+      !webEdition &&
+      whisperInstallStatus.status === "update_available" &&
+      !whisperUpdatePromptDismissed;
+    const dialogOpen =
+      showWebLibraryManager ||
+      showTemplateForm ||
+      showQuicktextForm ||
+      showVocabularyForm ||
+      showHstPaste ||
+      showSystemCheck ||
+      showSyncDashboard ||
+      whisperUpdateOpen;
+    if (!dialogOpen) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const dialog = document.querySelector<HTMLElement>(
+      ".modal-backdrop [role='dialog']",
+    );
+    if (!dialog) return;
+    const focusableSelector =
+      "button:not([disabled]), input:not([disabled]):not([type='hidden']), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const focusFirstControl = () => {
+      if (dialog.contains(document.activeElement)) return;
+      dialog.querySelector<HTMLElement>("[autofocus]")?.focus();
+      if (!dialog.contains(document.activeElement)) {
+        dialog.querySelector<HTMLElement>(focusableSelector)?.focus();
+      }
+    };
+    const animationFrame = window.requestAnimationFrame(focusFirstControl);
+    const handleDialogKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (showWebLibraryManager) setShowWebLibraryManager(false);
+        else if (showTemplateForm) {
+          setShowTemplateForm(false);
+          setEditingTemplate(null);
+          templateSelectionRef.current = null;
+        } else if (showQuicktextForm) {
+          setShowQuicktextForm(false);
+          setEditingQuicktext(null);
+        } else if (showVocabularyForm) {
+          setShowVocabularyForm(false);
+          setEditingVocabulary(null);
+          setLearningHeard("");
+        } else if (showHstPaste) {
+          setHstPasteText("");
+          setShowHstPaste(false);
+        }
+        else if (showSystemCheck) setShowSystemCheck(false);
+        else if (showSyncDashboard) setShowSyncDashboard(false);
+        else if (whisperUpdateOpen) setWhisperUpdatePromptDismissed(true);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(focusableSelector),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      document.removeEventListener("keydown", handleDialogKeyDown);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [
+    showHstPaste,
+    showQuicktextForm,
+    showSyncDashboard,
+    showSystemCheck,
+    showTemplateForm,
+    showVocabularyForm,
+    showWebLibraryManager,
+    whisperInstallStatus.status,
+    whisperUpdatePromptDismissed,
+  ]);
+
+  useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!note.trim() || noteCopied) return;
       event.preventDefault();
@@ -4544,6 +6305,21 @@ export default function Home() {
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [note, noteCopied]);
+
+  if (webEdition && isFramed) {
+    return (
+      <main className="frame-blocked-page">
+        <section className="frame-blocked-card" role="alert">
+          <span aria-hidden="true">S</span>
+          <h1>ScribeFlow cannot run inside another site</h1>
+          <p>
+            For privacy and clickjacking protection, open ScribeFlow directly
+            in its own browser tab or window.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className={`app-shell ${webEdition ? "web-edition" : ""}`}>
@@ -4562,7 +6338,7 @@ export default function Home() {
         <div className="privacy-badge">
           <span className="privacy-dot" aria-hidden="true" />
           {webEdition
-            ? "Clinical content stays in this browser"
+            ? "ScribeFlow itself does not upload clinical content"
             : "Local only — nothing leaves this device"}
         </div>
         <div className="top-actions">
@@ -4760,6 +6536,7 @@ export default function Home() {
                     ? openTemplateForm()
                     : openVocabularyForm()
               }
+              disabled={webEdition && !webLibraryOwnerKey}
             >
               +
             </button>
@@ -4785,7 +6562,19 @@ export default function Home() {
                 >
                   {syncRefreshing ? "Checking…" : "Check"}
                 </button>
+                <button
+                  className="web-library-refresh-button"
+                  type="button"
+                  onClick={() => setShowWebLibraryManager(true)}
+                  aria-haspopup="dialog"
+                >
+                  {webLibraryOwnerKey ? "Owner + backups" : "Owner setup"}
+                </button>
               </div>
+              <p className="web-shared-library-warning">
+                Reusable library fields are stored online. Never put PHI in
+                templates, Quicktext, vocabulary, names, or descriptions.
+              </p>
             </div>
           )}
 
@@ -4855,6 +6644,7 @@ export default function Home() {
                       type="button"
                       onClick={() => openQuicktextForm(item)}
                       aria-label={`Edit ${item.title}`}
+                      disabled={webEdition && !webLibraryOwnerKey}
                     >
                       Edit
                     </button>
@@ -4901,6 +6691,7 @@ export default function Home() {
                       type="button"
                       onClick={() => openTemplateForm(template)}
                       aria-label={`Edit ${template.name}`}
+                      disabled={webEdition && !webLibraryOwnerKey}
                     >
                       Edit
                     </button>
@@ -4932,6 +6723,7 @@ export default function Home() {
                       key={item.id}
                       onClick={() => openVocabularyForm(item)}
                       aria-label={`Edit vocabulary ${item.replacement}`}
+                      disabled={webEdition && !webLibraryOwnerKey}
                     >
                       <span className="vocabulary-heard">
                         Heard: <code>{item.heard}</code>
@@ -4976,6 +6768,14 @@ export default function Home() {
             <span className="divider" />
             <span>{wordCount} words</span>
           </div>
+
+          {webEdition && (
+            <div className="web-clinical-privacy-notice" role="note">
+              ScribeFlow itself does not upload note or PDF content. Dragon,
+              browser and writing-assistant settings, and clipboard or OS sync
+              are external and follow their own privacy controls.
+            </div>
+          )}
 
           <div className="format-toolbar" aria-label="Text formatting">
             <span>Format</span>
@@ -5105,7 +6905,14 @@ export default function Home() {
                 event.preventDefault();
                 insertEditorText(event.clipboardData.getData("text/plain"));
               }}
-              spellCheck
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              data-gramm="false"
+              data-gramm_editor="false"
+              data-enable-grammarly="false"
+              data-lt-active="false"
+              data-ms-editor="false"
               role="textbox"
               aria-multiline="true"
               aria-label="Clinical note editor"
@@ -5619,16 +7426,167 @@ export default function Home() {
         </div>
       )}
 
+      {webEdition && showWebLibraryManager && (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            className="modal-card web-library-manager-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="web-library-manager-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">Reusable online fields</p>
+                <h2 id="web-library-manager-title">Library access & backups</h2>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setShowWebLibraryManager(false)}
+                aria-label="Close library access and backups"
+              >
+                ×
+              </button>
+            </div>
+            <p className="web-library-phi-warning">
+              Templates, Quicktext, vocabulary, names, and descriptions sync
+              online. They are reusable writing tools only: never include PHI
+              or patient-specific content.
+            </p>
+            <form
+              className="web-owner-key-form"
+              onSubmit={saveWebLibraryOwnerKey}
+            >
+              <label>
+                Mantle owner write key
+                <input
+                  name="ownerKey"
+                  type="password"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder={
+                    webLibraryOwnerKey
+                      ? "Enter a replacement owner key"
+                      : "Paste the one-time owner key"
+                  }
+                  required
+                  autoFocus={!webLibraryOwnerKey}
+                />
+              </label>
+              <p>
+                The key is stored only in this browser. A setup link may use
+                <code>#mantle-key=YOUR_KEY</code>; ScribeFlow stores it and
+                immediately clears the fragment. Keep the Mantle library entry
+                public-readable for anonymous reads; the key is sent only with
+                writes.
+              </p>
+              <div className="web-owner-key-actions">
+                {webLibraryOwnerKey && (
+                  <button
+                    className="button subtle"
+                    type="button"
+                    onClick={forgetWebLibraryOwnerKey}
+                  >
+                    Forget owner key
+                  </button>
+                )}
+                <button className="button primary" type="submit">
+                  {webLibraryOwnerKey ? "Replace owner key" : "Enable editing"}
+                </button>
+              </div>
+            </form>
+            <section
+              className="web-library-backups"
+              aria-labelledby="web-backups-title"
+            >
+              <div className="web-library-backups-heading">
+                <div>
+                  <strong id="web-backups-title">Browser backups</strong>
+                  <small>Up to 10 recent reusable-library snapshots</small>
+                </div>
+                <div>
+                  <button
+                    className="button subtle"
+                    type="button"
+                    onClick={exportWebLibrary}
+                  >
+                    Export
+                  </button>
+                  <button
+                    className="button subtle"
+                    type="button"
+                    onClick={() => {
+                      if (requireWebLibraryOwner()) {
+                        webLibraryImportRef.current?.click();
+                      }
+                    }}
+                    disabled={!webLibraryOwnerKey}
+                  >
+                    Import
+                  </button>
+                  <input
+                    ref={webLibraryImportRef}
+                    className="visually-hidden"
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={(event) => void importWebLibrary(event)}
+                    tabIndex={-1}
+                  />
+                </div>
+              </div>
+              {webLibraryDirty && (
+                <div className="web-library-pending-save">
+                  <span>Unsynced browser changes are preserved.</span>
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={retryWebLibrarySave}
+                    disabled={!webLibraryOwnerKey || webLibrarySaving}
+                  >
+                    Retry sync
+                  </button>
+                </div>
+              )}
+              <div className="web-library-snapshot-list">
+                {webLibrarySnapshots.length === 0 ? (
+                  <p>No browser snapshots yet.</p>
+                ) : (
+                  webLibrarySnapshots.map((snapshot) => (
+                    <div key={`${snapshot.savedAt}-${snapshot.reason}`}>
+                      <span>
+                        <strong>{snapshot.reason}</strong>
+                        <small>{formatSyncTime(snapshot.savedAt)}</small>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => restoreWebLibrarySnapshot(snapshot)}
+                        disabled={!webLibraryOwnerKey}
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
       {showHstPaste && (
         <div className="modal-backdrop" role="presentation">
           <form
             className="modal-card hst-paste-modal"
             onSubmit={importHstResults}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hst-paste-title"
           >
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">Local HST import</p>
-                <h2>Paste HST results</h2>
+                <h2 id="hst-paste-title">Paste HST results</h2>
               </div>
               <button
                 type="button"
@@ -5651,6 +7609,13 @@ export default function Home() {
                 placeholder="Paste the home sleep test results here..."
                 autoFocus
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                data-gramm="false"
+                data-gramm_editor="false"
+                data-enable-grammarly="false"
+                data-lt-active="false"
+                data-ms-editor="false"
                 required
               />
             </label>
@@ -5676,11 +7641,14 @@ export default function Home() {
             className="modal-card"
             onSubmit={addQuicktext}
             key={editingQuicktext?.id ?? "new-quicktext"}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quicktext-form-title"
           >
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">Personal library</p>
-                <h2>
+                <h2 id="quicktext-form-title">
                   {editingQuicktext ? "Edit quicktext" : "Create quicktext"}
                 </h2>
               </div>
@@ -5771,13 +7739,16 @@ export default function Home() {
               editingVocabulary?.id ??
               (learningHeard ? `learn-${learningHeard}` : "new-vocabulary")
             }
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vocabulary-form-title"
           >
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">
                   {learningHeard ? "Voice learning" : "Recognition filter"}
                 </p>
-                <h2>
+                <h2 id="vocabulary-form-title">
                   {editingVocabulary
                     ? "Edit vocabulary term"
                     : learningHeard
@@ -5867,11 +7838,14 @@ export default function Home() {
             className="modal-card template-form-modal"
             onSubmit={saveTemplate}
             key={editingTemplate?.id ?? "new-template"}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="template-form-title"
           >
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">Template manager</p>
-                <h2>
+                <h2 id="template-form-title">
                   {editingTemplate ? "Edit template" : "Create template"}
                 </h2>
               </div>

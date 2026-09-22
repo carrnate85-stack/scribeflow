@@ -5,34 +5,110 @@ on:
     - cron: "23 8 */14 * *"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   refresh-library:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out fallback library
-        uses: actions/checkout@v4
-
-      - name: Refresh shared template library
+      - name: Validate and refresh the current shared library
         shell: bash
+        env:
+          MANTLE_WRITE_KEY: ${{ secrets.MANTLE_WRITE_KEY }}
         run: |
           set -euo pipefail
-          library_url="https://mantledb.sh/v2/scribeflow-carrnate85-a4d72f39/library"
-          if ! curl --fail --silent --show-error --retry 3 "$library_url" --output /tmp/scribeflow-library.json; then
-            cp public/shared-library.json /tmp/scribeflow-library.json
+          if [[ -z "$MANTLE_WRITE_KEY" ]]; then
+            echo "MANTLE_WRITE_KEY is not configured."
+            exit 1
           fi
-          node -e '
-            const fs = require("fs");
-            const value = JSON.parse(fs.readFileSync("/tmp/scribeflow-library.json", "utf8"));
-            const keys = Object.keys(value).sort().join(",");
-            if (keys !== "quicktexts,templates,updatedAt,version,vocabulary") {
-              throw new Error("Unexpected shared-library fields");
+
+          library_url="https://mantledb.sh/v2/scribeflow-carrnate85-a4d72f39/library"
+          library_file="$RUNNER_TEMP/scribeflow-library.json"
+          curl --fail --silent --show-error \
+            --retry 3 --retry-all-errors \
+            --connect-timeout 15 --max-time 60 \
+            "$library_url" --output "$library_file"
+
+          LIBRARY_FILE="$library_file" node <<'NODE'
+          const fs = require("node:fs");
+          const file = process.env.LIBRARY_FILE;
+          const raw = fs.readFileSync(file, "utf8");
+          if (Buffer.byteLength(raw, "utf8") > 2_000_000) {
+            throw new Error("Shared library exceeds the two-megabyte safety limit");
+          }
+          const value = JSON.parse(raw);
+          const isRecord = (entry) =>
+            entry !== null && typeof entry === "object" && !Array.isArray(entry);
+          const exactKeys = (entry, allowed, required = allowed) => {
+            if (!isRecord(entry)) return false;
+            const keys = Object.keys(entry);
+            return keys.every((key) => allowed.includes(key)) &&
+              required.every((key) => Object.hasOwn(entry, key));
+          };
+          const safeString = (entry, max) =>
+            typeof entry === "string" &&
+            entry.length <= max &&
+            !entry.includes("\0");
+          const safeHtml = (html) => {
+            if (!safeString(html, 250_000)) return false;
+            const tags = html.match(/<[^>]*>/g) || [];
+            return tags.every((tag) =>
+              /^<\/?(?:div|strong|b|u)>$/i.test(tag) ||
+              /^<br\s*\/?>$/i.test(tag),
+            );
+          };
+
+          if (!exactKeys(
+            value,
+            ["version", "updatedAt", "templates", "quicktexts", "vocabulary"],
+          )) throw new Error("Unexpected shared-library fields");
+          if (value.version !== 1 ||
+              !Number.isSafeInteger(value.updatedAt) ||
+              value.updatedAt <= 0) {
+            throw new Error("Invalid shared-library version or timestamp");
+          }
+          if (!Array.isArray(value.templates) || value.templates.length > 500 ||
+              !Array.isArray(value.quicktexts) || value.quicktexts.length > 2_000 ||
+              !Array.isArray(value.vocabulary) || value.vocabulary.length > 5_000) {
+            throw new Error("Invalid shared-library collection size");
+          }
+
+          for (const template of value.templates) {
+            if (!exactKeys(
+              template,
+              ["id", "name", "type", "description", "content", "contentHtml"],
+              ["id", "name", "type", "description", "content"],
+            ) ||
+              !safeString(template.id, 200) ||
+              !safeString(template.name, 500) ||
+              !safeString(template.type, 200) ||
+              !safeString(template.description, 5_000) ||
+              !safeString(template.content, 250_000) ||
+              (template.contentHtml !== undefined && !safeHtml(template.contentHtml))) {
+              throw new Error("Invalid template in shared library");
             }
-          '
-          curl --fail --silent --show-error --retry 3 \
+          }
+          for (const quicktext of value.quicktexts) {
+            if (!exactKeys(
+              quicktext,
+              ["id", "shortcut", "title", "content", "category"],
+            ) || Object.values(quicktext).some((entry) => !safeString(entry, 100_000))) {
+              throw new Error("Invalid quicktext in shared library");
+            }
+          }
+          for (const item of value.vocabulary) {
+            if (!exactKeys(item, ["id", "heard", "replacement"]) ||
+                Object.values(item).some((entry) => !safeString(entry, 10_000))) {
+              throw new Error("Invalid vocabulary item in shared library");
+            }
+          }
+          NODE
+
+          curl --fail --silent --show-error \
+            --retry 3 --retry-all-errors \
+            --connect-timeout 15 --max-time 60 \
             --request POST \
             --header "Content-Type: application/json" \
-            --data-binary @/tmp/scribeflow-library.json \
+            --header "X-Mantle-Key: $MANTLE_WRITE_KEY" \
+            --data-binary "@$library_file" \
             "$library_url"

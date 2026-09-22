@@ -60,6 +60,10 @@ foreach ($requiredSource in @(
     (Join-Path $projectRoot "scripts\start-scribeflow.ps1"),
     (Join-Path $projectRoot "scripts\update-scribeflow.ps1"),
     (Join-Path $projectRoot "scripts\launch-scribeflow.ps1"),
+    (Join-Path $projectRoot "scripts\scribeflow-lifecycle.ps1"),
+    (Join-Path $projectRoot "scripts\uninstall-scribeflow.ps1"),
+    (Join-Path $projectRoot "scripts\local-model-server.mjs"),
+    (Join-Path $projectRoot "scripts\portable-web-server.mjs"),
     (Join-Path $projectRoot "scripts\install-native-whisper.ps1"),
     (Join-Path $projectRoot "scripts\whisper-release.json"),
     (Join-Path $projectRoot "scripts\whisper-release-utils.mjs"),
@@ -119,6 +123,12 @@ Copy-Item `
     -Destination (Join-Path $payloadRoot "dist") `
     -Recurse `
     -Force
+# The static web edition carries a public fallback library. The desktop app
+# never reads that asset, and user templates must not ride inside installers.
+$webLibraryFallback = Join-Path $payloadRoot "dist\client\shared-library.json"
+if (Test-Path -LiteralPath $webLibraryFallback -PathType Leaf) {
+    Remove-Item -LiteralPath $webLibraryFallback -Force
+}
 Copy-Item `
     -LiteralPath (Join-Path $projectRoot "scripts") `
     -Destination (Join-Path $payloadRoot "scripts") `
@@ -151,7 +161,7 @@ Copy-Item `
     Set-Content -LiteralPath (Join-Path $payloadRoot "app-version.json") `
         -Encoding UTF8
 
-$nodeVersion = "v22.13.1"
+$nodeVersion = "v22.23.2"
 $nodeArchiveName = "node-$nodeVersion-win-x64.zip"
 $nodeBaseUrl = "https://nodejs.org/dist/$nodeVersion"
 $cacheRoot = Join-Path $env:TEMP "ScribeFlow-installer-cache"
@@ -164,7 +174,11 @@ Write-Host "Downloading the verified portable Node.js runtime..." -ForegroundCol
     --location `
     --fail `
     --retry 5 `
+    --retry-all-errors `
     --retry-delay 2 `
+    --connect-timeout 10 `
+    --max-time 900 `
+    --continue-at - `
     --output $nodeArchive `
     "$nodeBaseUrl/$nodeArchiveName"
 if ($LASTEXITCODE -ne 0) {
@@ -174,7 +188,10 @@ if ($LASTEXITCODE -ne 0) {
     --location `
     --fail `
     --retry 5 `
+    --retry-all-errors `
     --retry-delay 2 `
+    --connect-timeout 10 `
+    --max-time 120 `
     --output $nodeChecksums `
     "$nodeBaseUrl/SHASUMS256.txt"
 if ($LASTEXITCODE -ne 0) {
@@ -217,7 +234,23 @@ Copy-Item `
     -Force
 Remove-Item -LiteralPath $nodeExtractRoot -Recurse -Force
 
+$payloadFiles = @(
+    Get-ChildItem -LiteralPath $payloadRoot -File -Recurse |
+        ForEach-Object {
+            [ordered]@{
+                path = $_.FullName.Substring($payloadRoot.Length).
+                    TrimStart("\", "/").Replace("\", "/")
+                size = $_.Length
+                sha256 = (
+                    Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+                ).Hash
+            }
+        } |
+        Sort-Object { $_.path }
+)
+
 $manifest = [ordered]@{
+    schemaVersion = 2
     name = "ScribeFlow"
     version = $appVersion
     createdUtc = (Get-Date).ToUniversalTime().ToString("o")
@@ -230,6 +263,7 @@ $manifest = [ordered]@{
     speechModelInstall = "downloaded and checksum-verified from inside ScribeFlow"
     nodeVersion = $nodeVersion
     nodeSha256 = $actualNodeSha256
+    payloadFiles = $payloadFiles
 }
 $manifest |
     ConvertTo-Json -Depth 5 |
