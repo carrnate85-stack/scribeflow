@@ -90,6 +90,10 @@ test("captures installer output and retains exactly one successful update archiv
 
   assert.match(updater, /RedirectStandardOutput \$stdoutPath/);
   assert.match(updater, /RedirectStandardError \$stderrPath/);
+  const installerLaunch = updater.match(/\$process = Start-Process[\s\S]*?-PassThru/)?.[0];
+  assert.ok(installerLaunch);
+  assert.doesNotMatch(installerLaunch, /-Wait\b/);
+  assert.match(updater, /\$process\.WaitForExit\(600000\)/);
   assert.match(updater, /installerExitCode/);
   assert.match(updater, /Add-InstallerOutputToLog/);
   assert.match(updater, /Prune-ScribeFlowUpdateCache -KeepPath \$releaseRoot/);
