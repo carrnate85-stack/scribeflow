@@ -41,3 +41,24 @@ test("builds the Dragon-ready web edition without local dictation setup", async 
   assert.doesNotMatch(source, /Open system check|Open shared library status/);
   assert.doesNotMatch(source, /Delete after import/);
 });
+
+test("follow-up forms keep the sleep questionnaire, Epworth and PLATO scores separate", async () => {
+  const { createServer } = await import("vite");
+  const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { parseFollowUp } = await server.ssrLoadModule("/github-pages/follow-up.ts");
+    const form = [
+      "Medication Allergies: Latex", "Social History: Never smoked", "Sleep Questionnaire:",
+      "Average hours of sleep per night: 7", "Takes naps: No", "Epworth Sleep Score:",
+      "- Sitting and reading: Moderate", "- Watching TV: Slight", "SCORE: 3",
+      "Daytime & Nighttime Experiences (PLATO):", "SCORE: 17",
+    ].join("\n");
+    const questions = { sleepQuestionnaire: "Average hours of sleep per night: 7\nTakes naps: No", ess: "- Sitting and reading: Moderate (2)\n- Watching TV: Slight (1)\nSCORE: 3" };
+    assert.deepEqual(parseFollowUp(form, "cpap"), questions);
+    assert.deepEqual(parseFollowUp(form, "intake"), { ...questions, allergies: "Latex", socialHistory: "Never smoked" });
+    assert.deepEqual(parseFollowUp("Epworth Sleepiness Scale (ESS): 0/24", "cpap"), { ess: "0/24" });
+    assert.deepEqual(parseFollowUp("Daytime & Nighttime Experiences (PLATO):\nSCORE: 17", "cpap"), {});
+  } finally {
+    await server.close();
+  }
+});

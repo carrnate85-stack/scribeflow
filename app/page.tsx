@@ -1653,7 +1653,9 @@ function collapseRepeatedWhisperPhrases(text: string) {
   return collapsed.join(" ");
 }
 
-export default function Home() {
+type FollowUpParser = (text: string, kind: "intake" | "cpap") => Partial<PdfMeasurements>;
+
+export default function Home({ parseFollowUp }: { parseFollowUp?: FollowUpParser } = {}) {
   const [note, setNote] = useState("");
   const [isFramed] = useState(() => webEdition && detectWindowFraming());
   const [noteHtml, setNoteHtml] = useState("");
@@ -2559,10 +2561,14 @@ export default function Home() {
         page.cleanup();
       }
 
-      const extractedText = pageText.join(" ");
+      const extractedText = pageText.join(parseFollowUp ? "\n" : " ");
       const measurements: PdfMeasurements = isPapImport
         ? { cpap: extractCpapSummary(extractedText) }
         : extractPdfMeasurements(extractedText);
+      if (parseFollowUp) {
+        if (isPapImport && !measurements.cpap) delete measurements.cpap;
+        Object.assign(measurements, parseFollowUp(extractedText, importKind));
+      }
       pageText.fill("");
       const foundFields = Object.entries(measurements).filter(
         ([, value]) => Boolean(value),
@@ -2619,11 +2625,13 @@ export default function Home() {
                 ? "measurements added to the note"
                 : "ready for dot phrases"
           }`;
+      if (parseFollowUp && isPapImport && (measurements.ess || measurements.sleepQuestionnaire)) {
+        const tokens = foundFields.map(([field]) => "." + field.toLowerCase()).join(", ");
+        successfulStatus = "PAP follow-up ready for " + tokens;
+      }
       scanSucceeded = true;
       updateImportStatus(successfulStatus);
-      setToast(
-        isPapImport ? "PAP compliance summary is ready" : "PDF fields are ready",
-      );
+      setToast(isPapImport ? successfulStatus : "PDF fields are ready");
     } catch {
       updateImportStatus(
         isPapImport
